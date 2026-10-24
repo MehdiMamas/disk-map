@@ -64,3 +64,4 @@ button.link { background:none; border:none; color:var(--mut); text-decoration:un
 #un-total { font-weight:600; margin-top:6px; }
 button.danger-solid { background:#d12; border-color:#d12; }
 @media (prefers-color-scheme: dark) { .overlay .card { background:#2a2a2e; color:#eee; } .overlay small { color:#aaa; } }
+#rescan-cur { margin-left:auto; }

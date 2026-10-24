@@ -12,7 +12,7 @@ interface VNode {
 }
 interface ScanResult {
   root: VNode; errors: number; permission_denied: number; denied_examples: string[];
-  other_fs_skipped: number; elapsed_ms: number;
+  other_fs_skipped: number; elapsed_ms: number; scanned_at: number;
 }
 
 const app = document.getElementById("app")!;
@@ -27,7 +27,7 @@ app.innerHTML = `
 <div id="status"></div>
 <div id="hint" hidden></div>
 <div id="update" hidden></div>
-<nav id="crumbs"><button id="back" disabled>← Back</button><span id="trail"></span></nav>
+<nav id="crumbs"><button id="back" disabled>← Back</button><span id="trail"></span><button id="rescan-cur" hidden>Scan this folder again</button></nav>
 <main><div id="map"></div><ul id="list"></ul></main>`;
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 
@@ -36,6 +36,32 @@ const isMac = navigator.userAgent.includes("Mac");
 const sep = isWin ? "\\" : "/";
 let scanRoot = "";
 let stack: VNode[] = [];
+let busy = false;
+let baseStatus = "";
+let scannedAt = 0;
+
+function ago(secs: number): string {
+  const d = Math.max(0, Math.floor(Date.now() / 1000) - secs);
+  if (d < 60) return "just now";
+  if (d < 3600) return `${Math.floor(d / 60)} min ago`;
+  if (d < 86400) return `${Math.floor(d / 3600)} h ago`;
+  return `${Math.floor(d / 86400)} d ago`;
+}
+function lsGet(k: string): string | null { try { return localStorage.getItem(k); } catch { return null; } }
+function lsSet(k: string, v: string) { try { localStorage.setItem(k, v); } catch { /* ignore */ } }
+function showStatus() {
+  $("status").textContent = baseStatus + (scannedAt ? `${baseStatus ? " · " : ""}scanned ${ago(scannedAt)}` : "");
+}
+function updateButtons() {
+  const same = scanRoot !== "" && $<HTMLInputElement>("path").value.trim() === scanRoot;
+  $("scan").textContent = same ? "Scan again" : "Scan";
+  $<HTMLButtonElement>("scan").disabled = busy;
+  const rc = $<HTMLButtonElement>("rescan-cur");
+  rc.hidden = stack.length === 0;
+  rc.disabled = busy;
+  document.querySelectorAll<HTMLButtonElement>("#list button[data-act=rescan]").forEach((b) => b.disabled = busy);
+}
+function setBusy(b: boolean) { busy = b; updateButtons(); }
 
 export function fmt(n: number): string {
   const u = ["B", "KB", "MB", "GB", "TB"];
@@ -46,49 +72,103 @@ export function fmt(n: number): string {
 const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]!));
 const cur = () => stack[stack.length - 1];
 
+function extraText(r: ScanResult): string {
+  return [
+    r.errors ? `${r.errors} folders could not be read` : "",
+    r.other_fs_skipped ? `${r.other_fs_skipped} other drives skipped` : "",
+  ].filter(Boolean).join(", ");
+}
+
+async function showHint(r: ScanResult) {
+  const h = $("hint");
+  h.hidden = true;
+  const fda = isMac && r.permission_denied > 0 ? await invoke<string>("full_disk_access").catch(() => "unknown") : "";
+  if (fda === "granted") {
+    h.hidden = false;
+    h.textContent = `${r.permission_denied} system-protected folders were skipped. macOS keeps these locked even with Full Disk Access; this is normal.`;
+  } else if (r.permission_denied > 0 && isMac) {
+    h.hidden = false;
+    h.textContent = `Some folders were blocked by macOS (${r.denied_examples[0] ?? ""}). Grant access: System Settings → Privacy & Security → Full Disk Access → enable Disk Map, then scan again. `;
+    const b = document.createElement("button");
+    b.textContent = "Open System Settings";
+    b.onclick = () => invoke("open_privacy_settings");
+    h.appendChild(b);
+  } else if (r.permission_denied > 0) {
+    h.hidden = false;
+    h.textContent = `${r.permission_denied} folders were not readable (permission denied). Run as administrator to include them.`;
+  }
+}
+
+// Rebuild the drill-down from the given folder paths (the first is the root), stopping at the first that is gone.
+async function rebuildStack(root: VNode, paths: string[]) {
+  const next = [root];
+  for (const p of paths) {
+    try { next.push(await invoke<VNode>("view", { path: p })); } catch { break; }
+  }
+  stack = next;
+}
+
 async function startScan() {
   const path = $<HTMLInputElement>("path").value.trim();
-  if (!path) return;
-  $("scan").setAttribute("disabled", "");
-  $("status").textContent = "Scanning…";
+  if (!path || busy) return;
+  const keep = path === scanRoot ? stack.slice(1).map((n) => n.path) : [];
+  setBusy(true);
+  baseStatus = "Scanning…";
+  scannedAt = 0;
+  showStatus();
   $("hint").hidden = true;
   try {
     const r = await invoke<ScanResult>("scan", { path });
     scanRoot = path;
-    stack = [r.root];
-    const extra = [
-      r.errors ? `${r.errors} folders could not be read` : "",
-      r.other_fs_skipped ? `${r.other_fs_skipped} other drives skipped` : "",
-    ].filter(Boolean).join(", ");
-    $("status").textContent = `${fmt(r.root.size)} in ${r.root.files.toLocaleString()} files, ${(r.elapsed_ms / 1000).toFixed(1)} s${extra ? " · " + extra : ""}`;
-    const fda = isMac && r.permission_denied > 0 ? await invoke<string>("full_disk_access").catch(() => "unknown") : "";
-    if (fda === "granted") {
-      const h = $("hint");
-      h.hidden = false;
-      h.textContent = `${r.permission_denied} system-protected folders were skipped. macOS keeps these locked even with Full Disk Access; this is normal.`;
-    } else if (r.permission_denied > 0 && isMac) {
-      const h = $("hint");
-      h.hidden = false;
-      h.textContent = `Some folders were blocked by macOS (${r.denied_examples[0] ?? ""}). Grant access: System Settings → Privacy & Security → Full Disk Access → enable Disk Map, then scan again. `;
-      const b = document.createElement("button");
-      b.textContent = "Open System Settings";
-      b.onclick = () => invoke("open_privacy_settings");
-      h.appendChild(b);
-    } else if (r.permission_denied > 0) {
-      const h = $("hint");
-      h.hidden = false;
-      h.textContent = `${r.permission_denied} folders were not readable (permission denied). Run as administrator to include them.`;
-    }
+    lsSet("lastRoot", path);
+    await rebuildStack(r.root, keep);
+    const extra = extraText(r);
+    baseStatus = `${fmt(r.root.size)} in ${r.root.files.toLocaleString()} files, ${(r.elapsed_ms / 1000).toFixed(1)} s${extra ? " · " + extra : ""}`;
+    scannedAt = r.scanned_at;
+    showStatus();
+    await showHint(r);
     render();
   } catch (e) {
-    $("status").textContent = `Error: ${e}`;
+    baseStatus = `Error: ${e}`;
+    scannedAt = 0;
+    showStatus();
   } finally {
-    $("scan").removeAttribute("disabled");
+    setBusy(false);
+  }
+}
+
+// Scan one folder again and splice it into the kept scan; the open views update in place.
+async function rescanFolder(path: string) {
+  if (busy) return;
+  if (path === scanRoot) { $<HTMLInputElement>("path").value = scanRoot; return startScan(); }
+  setBusy(true);
+  baseStatus = "Scanning…";
+  scannedAt = 0;
+  showStatus();
+  let err = "";
+  try {
+    const r = await invoke<ScanResult>("rescan", { path });
+    baseStatus = `${r.root.name}: ${fmt(r.root.size)} in ${r.root.files.toLocaleString()} files, ${(r.elapsed_ms / 1000).toFixed(1)} s${r.errors ? ` · ${r.errors} folders could not be read` : ""}`;
+    scannedAt = r.scanned_at;
+  } catch (e) { err = String(e); }
+  try {
+    const paths = stack.map((n) => n.path);
+    const next: VNode[] = [];
+    for (const p of paths) {
+      try { next.push(await invoke<VNode>("view", { path: p })); } catch { break; }
+    }
+    if (next.length) stack = next;
+    if (err) { baseStatus = `Error: ${err}`; scannedAt = 0; }
+    showStatus();
+    render();
+  } finally {
+    setBusy(false);
   }
 }
 
 function render() {
   const node = cur();
+  updateButtons();
   $<HTMLButtonElement>("back").disabled = stack.length < 2;
   $("trail").innerHTML = stack
     .map((n, i) => `<a data-i="${i}">${esc(i === 0 ? n.path : n.name)}</a>`)
@@ -114,7 +194,7 @@ function render() {
   const max = kids[0]?.size || 1;
   $("list").innerHTML = kids.map((k, i) => {
     const tag = k.hog ? `<span class="tag ${k.hog.safe}" title="${esc(k.hog.note)}">${esc(k.hog.label)}: ${safeText(k.hog.safe)}</span><span class="note">${esc(k.hog.note)}</span>` : "";
-    const acts = k.other ? "" : `<button data-act="reveal" data-i="${i}">${isMac ? "Reveal in Finder" : "Show in Explorer"}</button>${isMac && k.name.endsWith(".app") ? `<button data-act="uninstall" data-i="${i}" class="danger">Uninstall app…</button>` : ""}<button data-act="trash" data-i="${i}" class="danger">Move to Trash</button>`;
+    const acts = k.other ? "" : `${k.is_dir ? `<button data-act="rescan" data-i="${i}"${busy ? " disabled" : ""}>Scan again</button>` : ""}<button data-act="reveal" data-i="${i}">${isMac ? "Reveal in Finder" : "Show in Explorer"}</button>${isMac && k.name.endsWith(".app") ? `<button data-act="uninstall" data-i="${i}" class="danger">Uninstall app…</button>` : ""}<button data-act="trash" data-i="${i}" class="danger">Move to Trash</button>`;
     return `<li class="${k.is_dir && !k.other ? "dir" : ""}" data-i="${i}">
       <div class="bar" style="width:${(k.size / max) * 100}%"></div>
       <div class="row"><span class="name">${k.is_dir ? "▸ " : ""}${esc(k.name)}</span><span class="sz">${fmt(k.size)}</span></div>
@@ -125,6 +205,7 @@ function render() {
       const t = ev.target as HTMLElement;
       const k = kids[Number(li.dataset.i)];
       if (t.dataset.act === "reveal") { invoke("reveal", { path: k.path }); return; }
+      if (t.dataset.act === "rescan") { void rescanFolder(k.path); return; }
       if (t.dataset.act === "trash") { trash(k); return; }
       if (t.dataset.act === "uninstall") { openUninstall(k.path); return; }
       drill(k);
@@ -167,6 +248,8 @@ async function trash(k: VNode) {
 
 $("back").addEventListener("click", () => { if (stack.length > 1) { stack.pop(); render(); } });
 $("scan").addEventListener("click", startScan);
+$("rescan-cur").addEventListener("click", () => { if (stack.length) void rescanFolder(cur().path); });
+$("path").addEventListener("input", updateButtons);
 $("pick").addEventListener("click", async () => {
   const p = await open({ directory: true, defaultPath: $<HTMLInputElement>("path").value });
   if (typeof p === "string") { $<HTMLInputElement>("path").value = p; startScan(); }
@@ -176,8 +259,26 @@ window.addEventListener("resize", () => { if (stack.length) render(); });
 listen<{ files: number; bytes: number }>("scan-progress", (e) => {
   $("status").textContent = `Scanning… ${e.payload.files.toLocaleString()} files, ${fmt(e.payload.bytes)}`;
 });
-invoke<string>("home_dir").then((h) => { $<HTMLInputElement>("path").value = h; });
-void scanRoot;
+// On launch: show the scan from last time at once, else prefill the last folder, else home.
+(async () => {
+  try {
+    const r = await invoke<ScanResult | null>("load_last_scan");
+    if (r) {
+      scanRoot = r.root.path;
+      $<HTMLInputElement>("path").value = scanRoot;
+      stack = [r.root];
+      const extra = extraText(r);
+      baseStatus = `${fmt(r.root.size)} in ${r.root.files.toLocaleString()} files${extra ? " · " + extra : ""}`;
+      scannedAt = r.scanned_at;
+      showStatus();
+      render();
+      return;
+    }
+  } catch { /* no saved scan: show the empty start */ }
+  const last = lsGet("lastRoot");
+  $<HTMLInputElement>("path").value = last || (await invoke<string>("home_dir"));
+  updateButtons();
+})();
 
 // ---- macOS Full Disk Access onboarding ----
 function fdaSkipped(): boolean {
@@ -344,22 +445,31 @@ async function openUninstall(appPath: string) {
 
 // Measuring every app is slow, so the list is kept and reused until the user asks for a fresh one.
 let appsCache: AppEntry[] | null = null;
+let appsAt = 0;
+function saveApps() {
+  if (appsCache) lsSet("appsCache", JSON.stringify({ at: appsAt, apps: appsCache }));
+}
+try {
+  const raw = lsGet("appsCache");
+  const o = raw ? JSON.parse(raw) : null;
+  if (o && Array.isArray(o.apps) && typeof o.at === "number") { appsCache = o.apps; appsAt = o.at; }
+} catch { try { localStorage.removeItem("appsCache"); } catch { /* ignore */ } }
 
 function renderApps(ov: HTMLElement) {
   const card = ov.querySelector(".card")!;
   const apps = appsCache ?? [];
-  card.innerHTML = `<h2>Installed apps</h2><small>Sorted by app size plus its leftover data.</small>
+  card.innerHTML = `<h2>Installed apps</h2><small>Sorted by app size plus its leftover data. Measured ${appsAt ? ago(appsAt) : "just now"}.</small>
     <ul class="un-list apps">${apps.map((a, i) => `<li><span class="un-main"><b>${esc(a.name)}</b><br><small>App ${fmt(a.app_size)} · data ${fmt(a.data_size)}</small></span>
       <span class="sz">${fmt(a.app_size + a.data_size)}</span><button data-i="${i}" class="danger">Uninstall…</button></li>`).join("")}</ul>
-    <div class="row"><button id="apps-refresh">Refresh</button><button id="un-close">Close</button></div>`;
+    <div class="row"><button id="apps-refresh">Scan again</button><button id="un-close">Close</button></div>`;
   card.querySelector<HTMLElement>("#un-close")!.onclick = () => ov.remove();
-  card.querySelector<HTMLElement>("#apps-refresh")!.onclick = () => { appsCache = null; void openApps(); };
+  card.querySelector<HTMLElement>("#apps-refresh")!.onclick = () => { appsCache = null; try { localStorage.removeItem("appsCache"); } catch { /* ignore */ } void openApps(); };
   card.querySelectorAll<HTMLElement>("button[data-i]").forEach((b) => b.onclick = () => openUninstall(apps[Number(b.dataset.i)].path));
 }
 
 // After an uninstall: drop the app from the kept list and redraw it in place, without measuring again.
 function forgetApp(path: string) {
-  if (appsCache) appsCache = appsCache.filter((a) => a.path !== path);
+  if (appsCache) { appsCache = appsCache.filter((a) => a.path !== path); saveApps(); }
   const ov = document.getElementById("appsPanel");
   if (ov) renderApps(ov);
 }
@@ -369,6 +479,8 @@ async function openApps() {
   const ov = overlay("appsPanel", `<h2>Installed apps</h2><p>Measuring apps and their data… this can take a few seconds.</p>`);
   try {
     appsCache = await invoke<AppEntry[]>("list_apps");
+    appsAt = Math.floor(Date.now() / 1000);
+    saveApps();
     if (ov.isConnected) renderApps(ov);
   } catch (e) {
     const card = ov.querySelector(".card")!;
