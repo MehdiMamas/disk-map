@@ -13,5 +13,15 @@
     "windows": [{ "title": "Disk Map", "width": 1100, "height": 760 }],
     "security": { "csp": null }
   },
-  "bundle": { "active": true, "targets": "all", "icon": ["icons/icon.png","icons/icon.icns","icons/icon.ico"] }
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": ["icons/icon.png", "icons/icon.icns", "icons/icon.ico"],
+    "publisher": "Mehdi Mamas",
+    "shortDescription": "See where your disk space went",
+    "longDescription": "Disk Map scans a folder and shows a treemap and sorted list of what uses your disk space, tags known space hogs, and lets you reveal or trash them.",
+    "category": "Utility",
+    "copyright": "Copyright (c) 2026 Mehdi Mamas",
+    "windows": { "webviewInstallMode": { "type": "embedBootstrapper" } }
+  }
 }

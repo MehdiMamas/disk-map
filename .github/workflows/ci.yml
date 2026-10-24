@@ -3,13 +3,14 @@ on:
   pull_request:
   push:
     branches: [main]
+permissions:
+  contents: read
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 jobs:
   build:
-    # Self-hosted Windows runner (gh-runners).
-    runs-on: [self-hosted, Windows]
+    runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -29,8 +30,7 @@ jobs:
         working-directory: src-tauri
       - run: pnpm tauri build --no-bundle
   build-macos:
-    # Self-hosted macOS runner (gh-runners).
-    runs-on: [self-hosted, macOS]
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
