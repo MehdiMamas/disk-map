@@ -27,6 +27,8 @@ Get the latest installer from the [Releases page](https://github.com/MehdiMamas/
 - Update notifications: a few seconds after launch (and on "Check for updates") the app asks GitHub for the latest release and offers its download when it is newer.
 - macOS: if folders are blocked, a hint explains how to grant Full Disk Access.
 
+- **Optimize tab**: a side menu with Overview (health checks and the top suggestions), Profiles, Performance, Privacy, Startup, Apps and Processes. On Windows, Profiles (Work, Gaming, Balanced) set a group of switches at once after a confirm dialog that lists every change; Performance and Privacy have single switches (power plan, visual effects, Game Mode, background apps, mouse acceleration, SysMain, Windows Search, advertising ID, tips and ads, Copilot, telemetry and more) that show the live Windows setting. Before any change, the old value is saved to a small journal on your machine, so each changed switch has an Undo button and "Restore all changes" puts everything back. Switches that need administrator rights are greyed out unless Disk Map runs as administrator. It never deletes files, ends processes, or touches Defender, Windows Update, the firewall, UAC or the hosts file; services only change their start type, and nothing is stopped. On macOS the same tab works with per-user settings written through the `defaults` command (Performance, Privacy and Interface switches, plus the Gaming, Work and Balanced profiles). Turning a switch off deletes the key again, so the system default returns, and every change has an Undo. Nothing is restarted for you: switches that only show after a Dock or Finder restart say so, and a "Relaunch Dock and Finder to apply" button does it when you click it. Startup lists your user and system launch agents and daemons (system ones are read-only and marked "needs admin"; user agents can be switched off and on) and your Login Items (read-only). Network can list adapters, set and reset DNS and ping a host; flushing the DNS cache needs admin, so the exact Terminal command is shown instead. Hardware shows CPU, memory, disks, graphics and macOS version. Before the first change Disk Map asks macOS for a local Time Machine snapshot. It never touches Gatekeeper, SIP, the firewall, FileVault, software updates, Spotlight indexing or power settings. The Mac side has not been tested on a real Mac yet. Thresholds are rough rules of thumb, not measurements.
+
 ## Privacy
 
 Scans stay on your machine and nothing about your files is ever sent anywhere. The only network request is the update check: an anonymous GET of the public GitHub latest-release page, with no data about you or your disks.
@@ -74,3 +76,5 @@ Without that profile the script stops after signing.
 ## License
 
 [MIT](LICENSE)
+
+The Optimize tab reads local system information (startup entries, installed apps, memory, disks, processes) to show it on screen. None of it leaves your machine, including the change journal.

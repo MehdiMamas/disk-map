@@ -26,6 +26,10 @@ dirs = "5"
 ureq = { version = "2", features = ["json"] }
 semver = "1"
 plist = "1"
+sysinfo = { version = "0.39", default-features = false, features = ["system", "disk"] }
+
+[target.'cfg(windows)'.dependencies]
+winreg = "0.56"
 
 [dev-dependencies]
 tempfile = "3"
