@@ -34,3 +34,14 @@ main { flex:1; display:flex; min-height:0; gap:10px; padding:0 10px 10px; }
 .acts { margin-left:auto; display:none; gap:4px; }
 li:hover .acts { display:flex; }
 .acts button { font-size:11px; padding:2px 6px; }
+
+#hint button { margin-left:6px; }
+#fda { position:fixed; inset:0; background:rgba(0,0,0,.45); display:flex; align-items:center; justify-content:center; z-index:100; }
+#fda .card { background:#fff; color:#222; max-width:480px; padding:22px 24px; border-radius:10px; box-shadow:0 8px 32px rgba(0,0,0,.3); }
+#fda h2 { margin:0 0 8px; font-size:18px; }
+#fda ol { padding-left:20px; line-height:1.5; }
+#fda .row { display:flex; gap:8px; margin:12px 0; }
+#fda-status { font-weight:600; margin-bottom:10px; }
+#fda-skip { display:inline-block; margin-bottom:6px; }
+#fda small { display:block; color:#666; }
+@media (prefers-color-scheme: dark) { #fda .card { background:#2a2a2e; color:#eee; } #fda small { color:#aaa; } }

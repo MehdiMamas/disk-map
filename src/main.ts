@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open, confirm } from "@tauri-apps/plugin-dialog";
 import { squarify } from "./treemap";
 import "./style.css";
@@ -60,7 +61,11 @@ async function startScan() {
     if (r.permission_denied > 0 && isMac) {
       const h = $("hint");
       h.hidden = false;
-      h.textContent = `Some folders were blocked by macOS (${r.denied_examples[0] ?? ""}). Grant access: System Settings → Privacy & Security → Full Disk Access → enable Disk Map, then scan again.`;
+      h.textContent = `Some folders were blocked by macOS (${r.denied_examples[0] ?? ""}). Grant access: System Settings → Privacy & Security → Full Disk Access → enable Disk Map, then scan again. `;
+      const b = document.createElement("button");
+      b.textContent = "Open System Settings";
+      b.onclick = () => invoke("open_privacy_settings");
+      h.appendChild(b);
     } else if (r.permission_denied > 0) {
       const h = $("hint");
       h.hidden = false;
@@ -155,3 +160,56 @@ listen<{ files: number; bytes: number }>("scan-progress", (e) => {
 });
 invoke<string>("home_dir").then((h) => { $<HTMLInputElement>("path").value = h; });
 void scanRoot;
+
+// ---- macOS Full Disk Access onboarding ----
+function fdaSkipped(): boolean {
+  try { return localStorage.getItem("fdaSkipped") === "1"; } catch { return false; }
+}
+
+async function fdaOnboarding() {
+  if (!isMac || fdaSkipped()) return;
+  if ((await invoke<string>("full_disk_access")) === "granted") return;
+  const ov = document.createElement("div");
+  ov.id = "fda";
+  ov.innerHTML = `<div class="card">
+    <h2>Give Disk Map access to your whole disk</h2>
+    <p>Without it, macOS hides Desktop, Documents, Downloads, iCloud, external drives and app data, and they show as unreadable.</p>
+    <ol>
+      <li>Click Open System Settings.</li>
+      <li>Turn on Disk Map in the Full Disk Access list (click + and pick Disk Map if it isn't there).</li>
+      <li>Come back here and it continues by itself.</li>
+    </ol>
+    <div class="row"><button id="fda-open" class="primary">Open System Settings</button>
+    <button id="fda-relaunch" hidden>Relaunch Disk Map</button></div>
+    <div id="fda-status">Waiting for access…</div>
+    <a href="#" id="fda-skip">Skip for now</a>
+    <small>Blocked folders will show as unreadable. You can grant access later in System Settings → Privacy &amp; Security → Full Disk Access.</small>
+  </div>`;
+  document.body.appendChild(ov);
+  let done = false;
+  let unlisten: (() => void) | undefined;
+  let timer = 0;
+  const close = () => { done = true; clearInterval(timer); unlisten?.(); ov.remove(); };
+  const check = async (fromFocus = false) => {
+    if (done) return;
+    const g = (await invoke<string>("full_disk_access")) === "granted";
+    if (done) return;
+    if (g) {
+      done = true;
+      $("fda-status").textContent = "Access granted ✓";
+      setTimeout(close, 900);
+    } else if (fromFocus) {
+      $("fda-relaunch").hidden = false;
+    }
+  };
+  $("fda-open").onclick = () => invoke("open_privacy_settings");
+  $("fda-relaunch").onclick = () => invoke("relaunch");
+  $("fda-skip").onclick = (e) => {
+    e.preventDefault();
+    try { localStorage.setItem("fdaSkipped", "1"); } catch { /* ignore */ }
+    close();
+  };
+  timer = window.setInterval(() => check(), 2000);
+  unlisten = await getCurrentWindow().onFocusChanged(({ payload }) => { if (payload) check(true); });
+}
+fdaOnboarding().catch(() => {});
