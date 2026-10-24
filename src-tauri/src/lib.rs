@@ -250,8 +250,8 @@ fn trash_with_finder(path: &str) -> Result<(), String> {
     if !out.status.success() {
         return Err(finder_error(&String::from_utf8_lossy(&out.stderr)));
     }
-    if let Some((root, tree)) = SCAN_STORE.lock().unwrap().as_mut() {
-        scanner::remove(tree, root, Path::new(path));
+    if let Some(s) = SCAN_STORE.lock().unwrap().as_mut() {
+        scanner::remove(&mut s.tree, &s.root.clone(), Path::new(path));
     }
     Ok(())
 }
