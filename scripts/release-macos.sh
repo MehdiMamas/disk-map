@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
-# Build, sign (Developer ID), notarize and staple the macOS app.
+# Build a universal binary, sign (Developer ID), notarize and staple the macOS app.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 export APPLE_SIGNING_IDENTITY="${APPLE_SIGNING_IDENTITY:-Developer ID Application: El Mehdi Mamas (7LPSQ8W7G8)}"
 PROFILE=disk-map-notary
-BUNDLE=src-tauri/target/release/bundle
+BUNDLE=src-tauri/target/universal-apple-darwin/release/bundle
 
-pnpm tauri build
+rustup target add aarch64-apple-darwin x86_64-apple-darwin
+pnpm tauri build --target universal-apple-darwin
 
 APP=$(ls -d "$BUNDLE"/macos/*.app | head -1)
 DMG=$(ls "$BUNDLE"/dmg/*.dmg | head -1)

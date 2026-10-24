@@ -1,6 +1,22 @@
+<p align="center"><img src="src-tauri/icons/128x128@2x.png" width="128" alt="Disk Map icon"></p>
+
 # Disk Map
 
-A small desktop app (Tauri 2, Rust + TypeScript) that shows where your disk space went. macOS lumps caches, Xcode data, Docker and simulators under "System Data"; Disk Map scans a folder (default: your home) and shows a treemap and a sorted list, tags known space hogs, and lets you reveal or trash them.
+See where your disk space went: a fast treemap and sorted list of any folder, with known space hogs tagged.
+
+macOS lumps caches, Xcode data, Docker and simulators under "System Data". Disk Map scans a folder (default: your home), shows what is big, and lets you reveal or trash it.
+
+## Download
+
+Get the latest installer from the [Releases page](https://github.com/MehdiMamas/disk-map/releases/latest).
+
+- **macOS** (10.15 or later): download the `.dmg` (universal: Apple silicon and Intel). It is signed and notarized by Apple, so it opens without warnings. Drag Disk Map to Applications.
+- **Windows 10/11**: download the `-setup.exe` (an `.msi` is also available). It installs WebView2 if it is missing. The installer is not code-signed, so SmartScreen may warn: click "More info", then "Run anyway".
+
+## First launch
+
+- **macOS**: Disk Map needs Full Disk Access to read protected folders. On first launch it shows a hint; open System Settings, Privacy & Security, Full Disk Access, switch Disk Map on, then restart the app.
+- **Windows**: run Disk Map as administrator if you want protected folders included.
 
 ## Features
 - Parallel scan (jwalk). Physical size on disk (`blocks * 512` on macOS/Linux, file size on Windows). Symlinks are never followed, other filesystems are skipped, hard links count once, unreadable folders are counted and reported.
@@ -9,10 +25,16 @@ A small desktop app (Tauri 2, Rust + TypeScript) that shows where your disk spac
 - Reveal in Finder/Explorer. Move to Trash after a confirm dialog (system Trash/Recycle Bin via the `trash` crate; nothing is ever deleted permanently).
 - macOS: if folders are blocked, a hint explains how to grant Full Disk Access.
 
+## Privacy
+
+Disk Map works fully offline. It makes no network requests and sends nothing anywhere; scans stay on your machine.
+
 ## Design choice: drill-down
 The scan keeps the full tree in memory in the Rust process and drill-down only re-prunes it, so clicking into a folder is instant and costs no disk I/O. To keep memory bounded, directories are all kept but files under 1 MiB are folded into one "(small files)" entry per directory (a 600k-file home scan stays small). The trade-off: the view can be stale until you rescan, and a rescan is the only way to see new files. Trashing an item updates the in-memory tree directly.
 
-## Run
+## Development
+
+### Run
 Prerequisites: Rust, Node, pnpm, and the [Tauri prerequisites](https://tauri.app/start/prerequisites/).
 
 ```
@@ -20,29 +42,33 @@ pnpm install
 pnpm tauri dev
 ```
 
-## Build
+### Build
 ```
 pnpm tauri build            # .app/.dmg (macOS), .msi/.exe (Windows) in src-tauri/target/release/bundle
 pnpm tauri build --no-bundle  # just the binary
 ```
 
-## Test
+### Test
 ```
 cd src-tauri && cargo test          # scanner and hog-rule unit tests
 cargo run --release --bin scan-cli -- ~/Projects   # top folders and scan time without the UI
 pnpm build                          # typecheck + frontend build
 ```
 
-## macOS signing and notarization
+### macOS signing and notarization (maintainer)
 
-`scripts/release-macos.sh` builds, signs with the Developer ID Application identity (hardened runtime is Tauri's default; no entitlements needed), notarizes and staples. The identity comes from `APPLE_SIGNING_IDENTITY` (default `Developer ID Application: El Mehdi Mamas (7LPSQ8W7G8)`), so `tauri.conf.json` stays portable for CI and other platforms. One-time notarization setup:
+`scripts/release-macos.sh` builds a universal binary, signs with the Developer ID Application identity (hardened runtime is Tauri's default; no entitlements needed), notarizes and staples. The identity comes from `APPLE_SIGNING_IDENTITY` (default `Developer ID Application: El Mehdi Mamas (7LPSQ8W7G8)`), so `tauri.conf.json` stays portable for CI and other platforms. One-time notarization setup:
 
     xcrun notarytool store-credentials disk-map-notary --apple-id <Apple ID> --team-id 7LPSQ8W7G8
 
 Without that profile the script stops after signing.
 
-## Permissions
+## Permissions notes
 
 - macOS needs only Full Disk Access; the app walks you through it on first launch. Under `pnpm tauri dev` the permission belongs to the terminal app, not Disk Map.
 - Move to Trash uses NSFileManager, so there is no Automation prompt, but Finder's "Put Back" is not available for those items.
 - Windows: run as administrator to include protected folders.
+
+## License
+
+[MIT](LICENSE)
