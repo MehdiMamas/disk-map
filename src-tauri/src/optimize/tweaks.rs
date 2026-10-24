@@ -1016,7 +1016,7 @@ mod tests {
             assert!(!p.items.is_empty());
             for (id, target) in p.items {
                 let tw = find(id).unwrap_or_else(|| panic!("profile {} uses unknown tweak {}", p.id, id));
-                assert!(desired(&tw, target).is_ok(), "profile {} has a bad target {} for {}", p.id, target, id);
+                assert!(desired(&Mock::new(true), &tw, target).is_ok(), "profile {} has a bad target {} for {}", p.id, target, id);
             }
         }
         assert!(profile("gaming").is_some() && profile("work").is_some() && profile("balanced").is_some());
