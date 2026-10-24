@@ -8,11 +8,8 @@ concurrency:
   cancel-in-progress: true
 jobs:
   build:
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [macos-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
+    # Self-hosted Windows runner (gh-runners); macOS is tested locally on the dev Mac.
+    runs-on: [self-hosted, Windows]
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
