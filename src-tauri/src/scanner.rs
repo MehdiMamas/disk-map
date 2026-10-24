@@ -118,7 +118,7 @@ pub fn scan_dir(root: &Path, opts: &Options, mut progress: impl FnMut(Progress))
     let (mut files, mut bytes) = (0u64, 0u64);
     let mut last = Instant::now();
 
-    let mut note_err = |out: &mut ScanOutput, e: &std::io::Error, p: &Path| {
+    let note_err = |out: &mut ScanOutput, e: &std::io::Error, p: &Path| {
         out.errors += 1;
         if e.kind() == std::io::ErrorKind::PermissionDenied {
             out.permission_denied += 1;
@@ -206,12 +206,10 @@ pub fn scan_dir(root: &Path, opts: &Options, mut progress: impl FnMut(Progress))
         if d.small_count > 0 {
             children.push(Node { name: SMALL_FILES.into(), size: d.small_size, is_dir: false, files: d.small_count, children: vec![] });
         }
-        // Subdirectory nodes were stashed into `nodes[child]`; collect them lazily below.
         let mut node = Node { name: d.name.clone(), size: d.own, is_dir: true, files: d.files, children };
         node.size += node.children.iter().map(|c| c.size).sum::<u64>();
         node.children.retain(|c| c.size > 0 || c.name != SMALL_FILES);
         nodes[i] = Some(node);
-        // attach any finished subdirectories (collected via pending list)
     }
     // Second pass attaches directory children (reverse order keeps totals correct).
     for i in (1..dirs.len()).rev() {
