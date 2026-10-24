@@ -51,7 +51,7 @@ pnpm tauri build --no-bundle  # just the binary
 ### Test
 ```
 cd src-tauri && cargo test          # scanner and hog-rule unit tests
-cargo run --release --bin scan-cli -- ~/Projects   # top folders and scan time without the UI
+cargo run --release --example scan_cli -- ~/Projects   # top folders and scan time without the UI
 pnpm build                          # typecheck + frontend build
 ```
 
