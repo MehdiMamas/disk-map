@@ -8,8 +8,29 @@ concurrency:
   cancel-in-progress: true
 jobs:
   build:
-    # Self-hosted Windows runner (gh-runners); macOS is tested locally on the dev Mac.
+    # Self-hosted Windows runner (gh-runners).
     runs-on: [self-hosted, Windows]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - run: cargo test
+        working-directory: src-tauri
+      - run: pnpm tauri build --no-bundle
+  build-macos:
+    # Self-hosted macOS runner (gh-runners).
+    runs-on: [self-hosted, macOS]
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
