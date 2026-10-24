@@ -32,3 +32,11 @@ cd src-tauri && cargo test          # scanner and hog-rule unit tests
 cargo run --release --bin scan-cli -- ~/Projects   # top folders and scan time without the UI
 pnpm build                          # typecheck + frontend build
 ```
+
+## macOS signing and notarization
+
+`scripts/release-macos.sh` builds, signs with the Developer ID Application identity (hardened runtime is Tauri's default; no entitlements needed), notarizes and staples. The identity comes from `APPLE_SIGNING_IDENTITY` (default `Developer ID Application: El Mehdi Mamas (7LPSQ8W7G8)`), so `tauri.conf.json` stays portable for CI and other platforms. One-time notarization setup:
+
+    xcrun notarytool store-credentials disk-map-notary --apple-id <Apple ID> --team-id 7LPSQ8W7G8
+
+Without that profile the script stops after signing.
