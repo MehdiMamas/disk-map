@@ -869,7 +869,7 @@ mod win {
                 Ok(parse_bcd(&out, name))
             }
             Target::Hibernate => hibernate_read(),
-            Target::Dns { .. } => Err("DNS is handled on the Network page".into()),
+            Target::Dns { adapter } => crate::optimize::net::dns_read(adapter),
         }
     }
 
@@ -896,7 +896,7 @@ mod win {
                 Val::Str(s) if s == "on" || s == "off" => run("powercfg", &["/hibernate", s]).map(|_| ()),
                 _ => Err("Cannot set hibernation.".into()),
             },
-            Target::Dns { .. } => Err("DNS is handled on the Network page".into()),
+            Target::Dns { adapter } => crate::optimize::net::dns_write(adapter, v),
         }
     }
 }

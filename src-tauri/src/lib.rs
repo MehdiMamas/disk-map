@@ -392,7 +392,8 @@ pub fn run() {
             optimize::optimize_undo_tweak,
             optimize::optimize_restore_all,
             optimize::optimize_profile_plan,
-            optimize::optimize_apply_profile, optimize::optimize_installed, optimize::optimize_processes, optimize::optimize_set_startup, optimize::optimize_uninstall, optimize::optimize_open])
+            optimize::optimize_apply_profile, optimize::optimize_installed, optimize::optimize_processes, optimize::optimize_set_startup, optimize::optimize_uninstall, optimize::optimize_open,
+            optimize::optimize_net, optimize::optimize_set_dns, optimize::optimize_undo_dns, optimize::optimize_flush_dns, optimize::optimize_ping, optimize::optimize_hardware])
         .run(tauri::generate_context!())
         .expect("error while running Disk Map");
 }

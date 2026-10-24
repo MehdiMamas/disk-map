@@ -10,8 +10,10 @@ use std::sync::Mutex;
 use tauri::Manager;
 
 pub mod health;
+pub mod hw;
 pub mod installed;
 pub mod journal;
+pub mod net;
 pub mod procs;
 pub mod rules;
 pub mod startup;
@@ -329,4 +331,112 @@ mod tests {
         assert_eq!(human(1_500_000_000), "1.5 GB");
         assert_eq!(human(250_000_000_000), "250 GB");
     }
+}
+
+// ---------- Network and hardware pages ----------
+
+#[derive(Serialize)]
+pub struct NetAdapterView {
+    pub name: String,
+    pub dhcp: bool,
+    pub servers: Vec<String>,
+    /// True when we changed this adapter's DNS and can undo it.
+    pub changed: bool,
+}
+
+#[derive(Serialize)]
+pub struct NetReport {
+    pub windows: bool,
+    pub admin: bool,
+    pub adapters: Vec<NetAdapterView>,
+}
+
+fn dns_tweak_id(adapter: &str) -> String {
+    format!("dns:{adapter}")
+}
+
+fn net_report(app: &tauri::AppHandle) -> Result<NetReport, String> {
+    let path = jpath(app)?;
+    let j = journal::Journal::load(&path)?;
+    let adapters = net::list_adapters()?
+        .into_iter()
+        .map(|a| {
+            let changed = j.has(&dns_tweak_id(&a.name));
+            NetAdapterView { name: a.name, dhcp: a.dhcp, servers: a.servers, changed }
+        })
+        .collect();
+    Ok(NetReport { windows: cfg!(windows), admin: tweaks::Backend::is_admin(&tweaks::Sys), adapters })
+}
+
+#[tauri::command]
+pub async fn optimize_net(app: tauri::AppHandle) -> Result<NetReport, String> {
+    blocking(move || net_report(&app)).await?
+}
+
+/// provider: cloudflare | google | quad9 | auto. The old setting is journaled first.
+#[tauri::command]
+pub async fn optimize_set_dns(app: tauri::AppHandle, adapter: String, provider: String) -> Result<NetReport, String> {
+    blocking(move || {
+        if !tweaks::Backend::is_admin(&tweaks::Sys) {
+            return Err(tweaks::ADMIN_MSG.to_string());
+        }
+        let want = net::provider_val(&provider)?;
+        session(&app, |j, save| {
+            let target = journal::Target::Dns { adapter: adapter.clone() };
+            let b = &tweaks::Sys;
+            let cur = tweaks::Backend::read(b, &target)?;
+            if cur == want {
+                return Ok(Vec::new());
+            }
+            let seq = j.push(&dns_tweak_id(&adapter), now(), vec![journal::Change { target: target.clone(), old: cur }]);
+            if let Err(e) = save(j) {
+                j.remove(seq);
+                return Err(e);
+            }
+            if let Err(e) = tweaks::Backend::write(b, &target, &want) {
+                j.remove(seq);
+                let _ = save(j);
+                return Err(e);
+            }
+            Ok(Vec::new())
+        })?;
+        net_report(&app)
+    })
+    .await?
+}
+
+#[tauri::command]
+pub async fn optimize_undo_dns(app: tauri::AppHandle, adapter: String) -> Result<NetReport, String> {
+    blocking(move || {
+        if !tweaks::Backend::is_admin(&tweaks::Sys) {
+            return Err(tweaks::ADMIN_MSG.to_string());
+        }
+        session(&app, |j, save| {
+            for e in j.for_tweak(&dns_tweak_id(&adapter)) {
+                for c in e.changes.iter().rev() {
+                    tweaks::Backend::write(&tweaks::Sys, &c.target, &c.old)?;
+                }
+                j.remove(e.seq);
+                save(j)?;
+            }
+            Ok(Vec::new())
+        })?;
+        net_report(&app)
+    })
+    .await?
+}
+
+#[tauri::command]
+pub async fn optimize_flush_dns() -> Result<(), String> {
+    blocking(net::flush_dns).await?
+}
+
+#[tauri::command]
+pub async fn optimize_ping(host: String) -> Result<net::PingResult, String> {
+    blocking(move || net::ping(&host)).await?
+}
+
+#[tauri::command]
+pub async fn optimize_hardware() -> Result<hw::Hardware, String> {
+    blocking(hw::read).await
 }
