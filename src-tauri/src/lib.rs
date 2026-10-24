@@ -326,3 +326,28 @@ pub fn run() {
         .expect("error while running Disk Map");
 }
 
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn saved_scan_round_trips_through_the_file() {
+        let dir = std::env::temp_dir().join(format!("disk-map-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let src = dir.join("src");
+        std::fs::create_dir_all(src.join("sub")).unwrap();
+        std::fs::write(src.join("sub/big.bin"), vec![1u8; 2 << 20]).unwrap();
+        let out = scanner::scan_dir(&src, &scanner::Options::default(), |_| {});
+        let saved = Saved { root: src.clone(), tree: out.tree, scanned_at: 42, errors: 1, ..Default::default() };
+        let file = dir.join("data/last-scan.json");
+        write_saved(&file, &saved).unwrap();
+        assert!(!file.with_extension("json.tmp").exists());
+        let back: Saved = serde_json::from_reader(std::fs::File::open(&file).unwrap()).unwrap();
+        assert_eq!(back.root, src);
+        assert_eq!(back.scanned_at, 42);
+        assert_eq!(back.tree.size, saved.tree.size);
+        assert!(scanner::find(&back.tree, &back.root, &src.join("sub/big.bin")).is_some());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
