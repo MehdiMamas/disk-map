@@ -373,6 +373,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(target_os = "macos")]
     fn refuses_running_app() {
         let t = tempfile::tempdir().unwrap();
         let app = make_app(t.path(), "RunMe", "com.example.runme");
@@ -388,6 +389,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(target_os = "macos")]
     fn plan_finds_leftovers_and_skips_decoy_and_uninstall_filters_items() {
         let t = tempfile::tempdir().unwrap();
         let home = t.path().join("home");
