@@ -3,7 +3,7 @@
 //! entry per directory), then `prune` produces the view the UI shows.
 use crate::hogs::{match_hog, Hog};
 use jwalk::WalkDirGeneric;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -14,7 +14,7 @@ pub const SMALL_FILES: &str = "(small files)";
 pub const OTHER: &str = "(other)";
 pub const PRUNE_FRACTION: f64 = 0.005;
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Node {
     pub name: String,
     pub size: u64,
@@ -327,6 +327,32 @@ pub fn remove(root: &mut Node, root_path: &Path, target: &Path) -> bool {
     go(root, &names).is_some()
 }
 
+/// Swap the subtree at `target` for `new_node` and adjust every ancestor's size and
+/// file count by the difference. `target` may be the root itself.
+pub fn replace(root: &mut Node, root_path: &Path, target: &Path, new_node: Node) -> bool {
+    let Ok(rel) = target.strip_prefix(root_path) else { return false };
+    let names: Vec<String> = rel.components().map(|c| c.as_os_str().to_string_lossy().into_owned()).collect();
+    if names.is_empty() {
+        *root = new_node;
+        return true;
+    }
+    fn go(n: &mut Node, names: &[String], new_node: Node) -> Option<(i128, i128)> {
+        let idx = n.children.iter().position(|c| c.name == names[0])?;
+        let delta = if names.len() == 1 {
+            let old = std::mem::replace(&mut n.children[idx], Node { name: names[0].clone(), ..new_node });
+            let c = &n.children[idx];
+            (c.size as i128 - old.size as i128, c.files as i128 - old.files as i128)
+        } else {
+            go(&mut n.children[idx], &names[1..], new_node)?
+        };
+        n.size = (n.size as i128 + delta.0).max(0) as u64;
+        n.files = (n.files as i128 + delta.1).max(0) as u64;
+        n.children.sort_by(|a, b| b.size.cmp(&a.size));
+        Some(delta)
+    }
+    go(root, &names, new_node).is_some()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -473,5 +499,36 @@ mod tests {
         assert_eq!(tree.children[0].size, 200);
         assert!(find(&tree, Path::new("/r"), Path::new("/r/d/g")).is_some());
         assert!(find(&tree, Path::new("/r"), Path::new("/r/d/f")).is_none());
+    }
+
+    #[test]
+    fn replace_updates_ancestors() {
+        let mut tree = Node {
+            name: "r".into(),
+            size: 300,
+            is_dir: true,
+            files: 3,
+            children: vec![Node {
+                name: "d".into(),
+                size: 300,
+                is_dir: true,
+                files: 3,
+                children: vec![leaf("f", 100), leaf("g", 200)],
+            }],
+        };
+        let fresh = Node { name: "d".into(), size: 50, is_dir: true, files: 1, children: vec![leaf("h", 50)] };
+        assert!(replace(&mut tree, Path::new("/r"), Path::new("/r/d"), fresh));
+        assert_eq!(tree.size, 50);
+        assert_eq!(tree.files, 1);
+        assert!(find(&tree, Path::new("/r"), Path::new("/r/d/h")).is_some());
+        assert!(find(&tree, Path::new("/r"), Path::new("/r/d/f")).is_none());
+        let deeper = Node { name: "x".into(), size: 500, is_dir: true, files: 5, children: vec![] };
+        assert!(replace(&mut tree, Path::new("/r"), Path::new("/r/d"), deeper));
+        assert_eq!(tree.size, 500);
+        assert!(!replace(&mut tree, Path::new("/r"), Path::new("/r/nope"), leaf("z", 1)));
+        assert!(!replace(&mut tree, Path::new("/r"), Path::new("/other"), leaf("z", 1)));
+        // Replacing the root itself just swaps it.
+        assert!(replace(&mut tree, Path::new("/r"), Path::new("/r"), leaf("r", 7)));
+        assert_eq!(tree.size, 7);
     }
 }
