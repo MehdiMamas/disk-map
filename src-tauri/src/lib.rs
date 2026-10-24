@@ -1,4 +1,5 @@
 pub mod hogs;
+pub mod permissions;
 pub mod scanner;
 
 use scanner::{Node, ViewNode, PRUNE_FRACTION};
@@ -77,18 +78,51 @@ fn reveal(path: String) -> Result<(), String> {
 /// Moves to the system Trash (never a permanent delete) and updates the in-memory tree.
 #[tauri::command]
 fn move_to_trash(path: String) -> Result<(), String> {
-    trash::delete(&path).map_err(|e| e.to_string())?;
+    #[allow(unused_mut)]
+    let mut ctx = trash::TrashContext::default();
+    // NSFileManager avoids driving Finder via AppleScript (no Automation prompt).
+    #[cfg(target_os = "macos")]
+    {
+        use trash::macos::{DeleteMethod, TrashContextExtMacos};
+        ctx.set_delete_method(DeleteMethod::NsFileManager);
+    }
+    ctx.delete(&path).map_err(|e| e.to_string())?;
     if let Some((root, tree)) = SCAN_STORE.lock().unwrap().as_mut() {
         scanner::remove(tree, root, Path::new(&path));
     }
     Ok(())
 }
 
+/// "granted" | "denied" | "unknown" (always "granted" off macOS).
+#[tauri::command]
+fn full_disk_access() -> String {
+    permissions::probe_all().to_string()
+}
+
+#[tauri::command]
+fn open_privacy_settings() -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg("x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles")
+            .spawn()
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+    }
+    #[cfg(not(target_os = "macos"))]
+    Ok(())
+}
+
+#[tauri::command]
+fn relaunch(app: tauri::AppHandle) {
+    app.restart();
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
-        .invoke_handler(tauri::generate_handler![home_dir, scan, view, reveal, move_to_trash])
+        .invoke_handler(tauri::generate_handler![home_dir, scan, view, reveal, move_to_trash, full_disk_access, open_privacy_settings, relaunch])
         .run(tauri::generate_context!())
         .expect("error while running Disk Map");
 }

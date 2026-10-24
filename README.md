@@ -40,3 +40,9 @@ pnpm build                          # typecheck + frontend build
     xcrun notarytool store-credentials disk-map-notary --apple-id <Apple ID> --team-id 7LPSQ8W7G8
 
 Without that profile the script stops after signing.
+
+## Permissions
+
+- macOS needs only Full Disk Access; the app walks you through it on first launch. Under `pnpm tauri dev` the permission belongs to the terminal app, not Disk Map.
+- Move to Trash uses NSFileManager, so there is no Automation prompt, but Finder's "Put Back" is not available for those items.
+- Windows: run as administrator to include protected folders.
