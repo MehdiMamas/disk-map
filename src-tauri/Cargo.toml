@@ -12,10 +12,6 @@ crate-type = ["lib", "staticlib", "cdylib"]
 name = "disk-map"
 path = "src/main.rs"
 
-[[bin]]
-name = "scan-cli"
-path = "src/bin/scan_cli.rs"
-
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
