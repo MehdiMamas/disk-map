@@ -225,6 +225,42 @@ fn trash_path(path: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Pure: turns osascript's stderr into a message the user can act on.
+fn finder_error(stderr: &str) -> String {
+    if stderr.contains("(-128)") {
+        "Cancelled: the admin password is needed to remove this app".into()
+    } else if stderr.contains("(-1743)") {
+        "Allow Disk Map to control Finder in System Settings \u{2192} Privacy & Security \u{2192} Automation, then try again".into()
+    } else {
+        stderr.trim().to_string()
+    }
+}
+
+/// Asks Finder to delete the path, so macOS shows its admin password prompt for
+/// root-owned apps. Still goes to the Trash (Put Back works).
+#[cfg(target_os = "macos")]
+fn trash_with_finder(path: &str) -> Result<(), String> {
+    let script = "on run argv\n tell application \"Finder\" to delete (POSIX file (item 1 of argv) as alias)\nend run";
+    let out = std::process::Command::new("osascript")
+        .arg("-e")
+        .arg(script)
+        .arg(path)
+        .output()
+        .map_err(|e| e.to_string())?;
+    if !out.status.success() {
+        return Err(finder_error(&String::from_utf8_lossy(&out.stderr)));
+    }
+    if let Some((root, tree)) = SCAN_STORE.lock().unwrap().as_mut() {
+        scanner::remove(tree, root, Path::new(path));
+    }
+    Ok(())
+}
+
+#[cfg(not(target_os = "macos"))]
+fn trash_with_finder(_path: &str) -> Result<(), String> {
+    Err("macOS needs an admin password to remove this app; drag it to the Trash in Finder".into())
+}
+
 /// Moves to the system Trash (never a permanent delete) and updates the in-memory tree.
 #[tauri::command]
 fn move_to_trash(app: tauri::AppHandle, path: String) -> Result<(), String> {
@@ -268,7 +304,7 @@ async fn uninstall_app(app: tauri::AppHandle, path: String, items: Vec<String>) 
     }
     let res = tauri::async_runtime::spawn_blocking(move || {
         let home = dirs::home_dir().ok_or("no home folder")?;
-        apps::uninstall(Path::new(&path), &home, &items, trash_path)
+        apps::uninstall(Path::new(&path), &home, &items, trash_path, trash_with_finder)
     })
     .await
     .map_err(|e| e.to_string())?;
@@ -349,5 +385,16 @@ mod tests {
         assert_eq!(back.tree.size, saved.tree.size);
         assert!(scanner::find(&back.tree, &back.root, &src.join("sub/big.bin")).is_some());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+#[cfg(test)]
+mod finder_tests {
+    use super::finder_error;
+    #[test]
+    fn maps_osascript_errors() {
+        assert!(finder_error("execution error: User canceled. (-128)").starts_with("Cancelled"));
+        assert!(finder_error("Not authorized to send Apple events to Finder. (-1743)").contains("Automation"));
+        assert_eq!(finder_error("boom\n"), "boom");
     }
 }
