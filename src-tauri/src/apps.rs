@@ -239,20 +239,28 @@ pub fn accepted_items(app_path: &Path, plan: &UninstallPlan, requested: &[String
         .collect()
 }
 
-pub fn uninstall(app_path: &Path, home: &Path, items: &[String], trash: impl Fn(&str) -> Result<(), String>) -> Result<Vec<ItemResult>, String> {
+/// Trashes the chosen items. When the normal trash fails for the app bundle itself
+/// (root-owned, installed by a pkg), `admin_trash` is tried, which lets macOS ask for the
+/// admin password. Leftovers only use `trash` and are processed whatever happens to the app.
+pub fn uninstall(
+    app_path: &Path,
+    home: &Path,
+    items: &[String],
+    trash: impl Fn(&str) -> Result<(), String>,
+    admin_trash: impl Fn(&str) -> Result<(), String>,
+) -> Result<Vec<ItemResult>, String> {
     let (_, p) = plan(app_path, home)?;
     let app_str = app_path.to_string_lossy().to_string();
     Ok(accepted_items(app_path, &p, items)
         .into_iter()
-        .map(|path| match trash(&path) {
-            Ok(()) => ItemResult { path, ok: true, error: None },
-            Err(e) => {
-                let msg = if path == app_str {
-                    "macOS needs an admin password to remove this app; drag it to the Trash in Finder".to_string()
-                } else {
-                    e
-                };
-                ItemResult { path, ok: false, error: Some(msg) }
+        .map(|path| {
+            let r = match trash(&path) {
+                Err(_) if path == app_str => admin_trash(&path),
+                r => r,
+            };
+            match r {
+                Ok(()) => ItemResult { path, ok: true, error: None },
+                Err(e) => ItemResult { path, ok: false, error: Some(e) },
             }
         })
         .collect())
@@ -423,12 +431,31 @@ mod tests {
     }
 
     #[test]
-    fn app_trash_failure_reports_admin_message() {
+    #[cfg(target_os = "macos")]
+    fn app_trash_failure_falls_back_to_admin_trash() {
+        use std::cell::RefCell;
         let t = tempfile::tempdir().unwrap();
         let app = make_app(t.path(), "Locked", "com.example.locked");
-        let r = uninstall(&app, t.path(), &[app.to_string_lossy().to_string()], |_| Err("denied".into())).unwrap();
+        let app_s = app.to_string_lossy().to_string();
+        let left = t.path().join("Library/Caches/com.example.locked");
+        fs::create_dir_all(&left).unwrap();
+        let left_s = left.to_string_lossy().to_string();
+        let items = vec![app_s.clone(), left_s.clone()];
+        let deny_app = |p: &str| if p == app_s { Err("denied".to_string()) } else { Ok(()) };
+
+        // Fallback succeeds: app ok, fallback called for the app only, leftover still trashed.
+        let calls = RefCell::new(Vec::new());
+        let r = uninstall(&app, t.path(), &items, deny_app, |p| { calls.borrow_mut().push(p.to_string()); Ok(()) }).unwrap();
+        assert_eq!(*calls.borrow(), vec![app_s.clone()]);
+        assert!(r.iter().all(|x| x.ok), "{r:?}");
+        assert_eq!(r.len(), 2);
+
+        // Cancelled: clear message kept, leftover still processed.
+        let msg = "Cancelled: the admin password is needed to remove this app";
+        let r = uninstall(&app, t.path(), &items, deny_app, |_| Err(msg.to_string())).unwrap();
         assert!(!r[0].ok);
-        assert!(r[0].error.as_ref().unwrap().contains("admin password"));
+        assert_eq!(r[0].error.as_deref(), Some(msg));
+        assert!(r[1].ok);
     }
 
     #[test]
@@ -467,7 +494,7 @@ mod tests {
         }
         let mut items: Vec<String> = p.leftovers.iter().filter(|l| l.default_checked).map(|l| l.path.clone()).collect();
         items.push(app.to_string_lossy().into());
-        let r = uninstall(&app, &home, &items, crate::trash_path).unwrap();
+        let r = uninstall(&app, &home, &items, crate::trash_path, crate::trash_with_finder).unwrap();
         for x in &r {
             println!("RESULT {} ok={} {:?}", x.path, x.ok, x.error);
             assert!(x.ok);
