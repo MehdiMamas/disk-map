@@ -165,6 +165,7 @@ mod tests {
     #[test]
     fn fixed_mounts() {
         assert!(!is_fixed_mount("E:\\", true));
+        #[cfg(windows)]
         assert!(is_fixed_mount("C:\\", false));
     }
 }

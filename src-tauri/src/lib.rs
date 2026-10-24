@@ -386,7 +386,13 @@ fn open_url(url: String) -> Result<(), String> {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
-        .invoke_handler(tauri::generate_handler![home_dir, scan, view, load_last_scan, rescan, reveal, move_to_trash, full_disk_access, open_privacy_settings, relaunch, check_update, open_url, list_apps, app_uninstall_plan, uninstall_app, optimize::optimize_overview, optimize::optimize_installed, optimize::optimize_processes, optimize::optimize_set_startup, optimize::optimize_uninstall, optimize::optimize_open])
+        .invoke_handler(tauri::generate_handler![home_dir, scan, view, load_last_scan, rescan, reveal, move_to_trash, full_disk_access, open_privacy_settings, relaunch, check_update, open_url, list_apps, app_uninstall_plan, uninstall_app, optimize::optimize_overview,
+            optimize::optimize_tweaks,
+            optimize::optimize_set_tweak,
+            optimize::optimize_undo_tweak,
+            optimize::optimize_restore_all,
+            optimize::optimize_profile_plan,
+            optimize::optimize_apply_profile, optimize::optimize_installed, optimize::optimize_processes, optimize::optimize_set_startup, optimize::optimize_uninstall, optimize::optimize_open])
         .run(tauri::generate_context!())
         .expect("error while running Disk Map");
 }

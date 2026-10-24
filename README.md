@@ -27,7 +27,7 @@ Get the latest installer from the [Releases page](https://github.com/MehdiMamas/
 - Update notifications: a few seconds after launch (and on "Check for updates") the app asks GitHub for the latest release and offers its download when it is newer.
 - macOS: if folders are blocked, a hint explains how to grant Full Disk Access.
 
-- **Optimize tab**: health checks (free space, memory, uptime, pending restart, temp folder), plain-language suggestions, startup apps you can switch off and on, installed apps (Windows) with the vendor's own uninstaller, and the heaviest processes. It only reads, or does things you can undo: it never deletes files, empties the Recycle Bin, ends processes or edits the registry beyond the Windows startup on/off value. Thresholds are rough rules of thumb, not measurements.
+- **Optimize tab**: a side menu with Overview (health checks and the top suggestions), Profiles, Performance, Privacy, Startup, Apps and Processes. On Windows, Profiles (Work, Gaming, Balanced) set a group of switches at once after a confirm dialog that lists every change; Performance and Privacy have single switches (power plan, visual effects, Game Mode, background apps, mouse acceleration, SysMain, Windows Search, advertising ID, tips and ads, Copilot, telemetry and more) that show the live Windows setting. Before any change, the old value is saved to a small journal on your machine, so each changed switch has an Undo button and "Restore all changes" puts everything back. Switches that need administrator rights are greyed out unless Disk Map runs as administrator. It never deletes files, ends processes, or touches Defender, Windows Update, the firewall, UAC or the hosts file; services only change their start type, and nothing is stopped. On macOS, Profiles, Performance and Privacy say "Windows only for now"; the other sections work as before (startup apps you can switch off and on, installed apps with the vendor's own uninstaller, the heaviest processes). Thresholds are rough rules of thumb, not measurements.
 
 ## Privacy
 
@@ -77,4 +77,4 @@ Without that profile the script stops after signing.
 
 [MIT](LICENSE)
 
-The Optimize tab reads local system information (startup entries, installed apps, memory, disks, processes) to show it on screen. None of it leaves your machine.
+The Optimize tab reads local system information (startup entries, installed apps, memory, disks, processes) to show it on screen. None of it leaves your machine, including the change journal.

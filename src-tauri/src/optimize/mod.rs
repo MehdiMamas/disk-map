@@ -1,15 +1,21 @@
-//! The Optimize tab: read-only health checks, suggestions and a few reversible actions.
-//! Nothing here deletes files, kills processes or edits the registry beyond the
-//! StartupApproved value that Windows itself uses for the "Startup apps" switch.
+//! The Optimize tab: health checks, suggestions and reversible Windows tweaks.
+//! Nothing here deletes files or kills processes. Tweaks (see tweaks.rs) write only a fixed
+//! list of registry values, service start types and the power plan, and the old value is
+//! saved to an undo journal first. Startup apps use the StartupApproved value Windows itself uses.
 #![allow(dead_code)]
 
 use serde::Serialize;
+use std::path::PathBuf;
+use std::sync::Mutex;
+use tauri::Manager;
 
 pub mod health;
 pub mod installed;
+pub mod journal;
 pub mod procs;
 pub mod rules;
 pub mod startup;
+pub mod tweaks;
 
 /// A button the UI may show. Only these kinds exist, all reversible or just "open something".
 #[derive(Serialize, Clone, Debug, PartialEq, Default)]
@@ -121,6 +127,113 @@ pub fn build_overview() -> Overview {
 
 async fn blocking<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> Result<T, String> {
     tauri::async_runtime::spawn_blocking(f).await.map_err(|e| e.to_string())
+}
+
+static LOCK: Mutex<()> = Mutex::new(());
+
+#[derive(Serialize)]
+pub struct ProfileInfo {
+    pub id: String,
+    pub name: String,
+    pub blurb: String,
+}
+
+#[derive(Serialize)]
+pub struct LastProfileInfo {
+    pub name: String,
+    pub at: u64,
+}
+
+#[derive(Serialize)]
+pub struct TweaksReport {
+    pub windows: bool,
+    pub admin: bool,
+    pub tweaks: Vec<tweaks::TweakView>,
+    pub profiles: Vec<ProfileInfo>,
+    pub last_profile: Option<LastProfileInfo>,
+    pub changed_count: usize,
+    /// Problems from the last action (things that could not be changed or restored).
+    pub notes: Vec<String>,
+}
+
+fn now() -> u64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
+}
+
+fn jpath(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    Ok(app.path().app_data_dir().map_err(|e| e.to_string())?.join("optimize-journal.json"))
+}
+
+fn report(j: &journal::Journal, notes: Vec<String>) -> TweaksReport {
+    let sys = tweaks::Sys;
+    let mut ids: Vec<&str> = j.entries.iter().map(|e| e.tweak.as_str()).collect();
+    ids.sort();
+    ids.dedup();
+    TweaksReport {
+        windows: cfg!(windows),
+        admin: tweaks::Backend::is_admin(&sys),
+        tweaks: if cfg!(windows) { tweaks::views(&sys, j) } else { Vec::new() },
+        profiles: tweaks::PROFILES.iter().map(|p| ProfileInfo { id: p.id.into(), name: p.name.into(), blurb: p.blurb.into() }).collect(),
+        last_profile: j.last_profile.as_ref().map(|l| LastProfileInfo { name: l.name.clone(), at: l.at }),
+        changed_count: ids.len(),
+        notes,
+    }
+}
+
+/// Loads the journal, runs `f` with a way to save it, and returns the new state.
+fn session(app: &tauri::AppHandle, f: impl FnOnce(&mut journal::Journal, &mut dyn FnMut(&journal::Journal) -> Result<(), String>) -> Result<Vec<String>, String>) -> Result<TweaksReport, String> {
+    let _g = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let path = jpath(app)?;
+    let mut j = journal::Journal::load(&path)?;
+    let mut save = |j: &journal::Journal| j.save(&path);
+    let res = f(&mut j, &mut save);
+    let notes = res?;
+    Ok(report(&j, notes))
+}
+
+#[tauri::command]
+pub async fn optimize_tweaks(app: tauri::AppHandle) -> Result<TweaksReport, String> {
+    blocking(move || session(&app, |_, _| Ok(Vec::new()))).await?
+}
+
+#[tauri::command]
+pub async fn optimize_set_tweak(app: tauri::AppHandle, id: String, target: String) -> Result<TweaksReport, String> {
+    blocking(move || {
+        session(&app, |j, save| {
+            let tw = tweaks::find(&id).ok_or("Unknown setting.")?;
+            tweaks::apply(&tweaks::Sys, j, &tw, &target, now(), save)?;
+            Ok(Vec::new())
+        })
+    })
+    .await?
+}
+
+#[tauri::command]
+pub async fn optimize_undo_tweak(app: tauri::AppHandle, id: String) -> Result<TweaksReport, String> {
+    blocking(move || {
+        session(&app, |j, save| {
+            let tw = tweaks::find(&id).ok_or("Unknown setting.")?;
+            tweaks::undo_tweak(&tweaks::Sys, j, &tw, save)?;
+            Ok(Vec::new())
+        })
+    })
+    .await?
+}
+
+#[tauri::command]
+pub async fn optimize_restore_all(app: tauri::AppHandle) -> Result<TweaksReport, String> {
+    blocking(move || session(&app, |j, save| tweaks::restore_all(&tweaks::Sys, j, save))).await?
+}
+
+/// Read-only: what applying this profile would change.
+#[tauri::command]
+pub async fn optimize_profile_plan(profile: String) -> Result<Vec<tweaks::PlanItem>, String> {
+    blocking(move || tweaks::plan_profile(&tweaks::Sys, &profile)).await?
+}
+
+#[tauri::command]
+pub async fn optimize_apply_profile(app: tauri::AppHandle, profile: String) -> Result<TweaksReport, String> {
+    blocking(move || session(&app, |j, save| tweaks::apply_profile(&tweaks::Sys, j, &profile, now(), save))).await?
 }
 
 #[tauri::command]
