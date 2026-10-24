@@ -1256,6 +1256,7 @@ mod tests {
         assert!(j.entries.is_empty());
     }
 
+    #[cfg(windows)]
     #[test]
     fn admin_tweaks_refused_without_admin() {
         let m = Mock::new(false);
@@ -1288,6 +1289,7 @@ mod tests {
         assert_eq!(m.get(&first_target(&a, 0)), Val::Absent);
     }
 
+    #[cfg(windows)]
     #[test]
     fn apply_profile_changes_and_records_it() {
         let m = Mock::new(false);
