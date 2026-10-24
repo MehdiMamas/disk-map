@@ -76,6 +76,20 @@ fn bin(n: u8) -> Val {
     Val::Bin(v)
 }
 
+fn bcd(name: &str, on: Val, off: Val) -> Item {
+    Item { target: Target::Bcd { name: name.into() }, on, off }
+}
+fn approved_run(name: &str) -> Item {
+    reg("HKCU", r"Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run", name, bin(3), bin(2))
+}
+
+const SYSPROF: &str = r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile";
+const EDGE: &str = r"SOFTWARE\Policies\Microsoft\Edge";
+const CONSENT: &str = r"Software\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore";
+const ADV: &str = r"Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced";
+const CLASSIC: &str = r"Software\Classes\CLSID\{86ca1aa0-34aa-4e8b-a509-50c905bae2a2}\InprocServer32";
+const NAGLE_IF: &str = r"SYSTEM\CurrentControlSet\Services\Tcpip\Parameters\Interfaces";
+
 const CDM: &str = r"Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager";
 
 fn toggle(id: &'static str, group: &'static str, name: &'static str, desc: &'static str, admin: bool, restart: bool, items: Vec<Item>) -> Tweak {
@@ -132,6 +146,93 @@ pub fn catalog() -> Vec<Tweak> {
         ),
         toggle("telemetry", "privacy", "Telemetry: minimum", "Sends Microsoft only the least diagnostic data allowed.", true, false, vec![reg("HKLM", r"SOFTWARE\Policies\Microsoft\Windows\DataCollection", "AllowTelemetry", dw(0), Val::Absent)]),
         toggle("diagtrack", "privacy", "Connected User Experiences service off", "Stops the service that sends diagnostic data.", true, false, vec![svc("DiagTrack", "auto")]),
+
+        toggle(
+            "net-throttling",
+            "performance",
+            "Network throttling off",
+            "Removes the limit Windows puts on network traffic while media plays, and gives apps more CPU time.",
+            true,
+            false,
+            vec![reg("HKLM", SYSPROF, "NetworkThrottlingIndex", dw(0xffff_ffff), dw(10)), reg("HKLM", SYSPROF, "SystemResponsiveness", dw(10), dw(20))],
+        ),
+        Tweak { id: "nagle", group: "performance", name: "Nagle off (lower online game lag)", desc: "Sends small network packets at once instead of grouping them. Can lower lag in online games.", admin: true, restart: false, kind: Kind::Nagle },
+        toggle(
+            "hpet",
+            "performance",
+            "Platform clock tweaks (HPET)",
+            "Stops forcing the slow platform clock and the dynamic tick. Can smooth frame times on some PCs; on others it changes nothing.",
+            true,
+            true,
+            vec![bcd("useplatformclock", st("No"), Val::Absent), bcd("disabledynamictick", st("Yes"), Val::Absent)],
+        ),
+        toggle("fast-startup", "performance", "Fast Startup off", "Makes Shut down a full shutdown, which avoids odd issues after updates and driver changes.", true, false, vec![reg("HKLM", r"SYSTEM\CurrentControlSet\Control\Session Manager\Power", "HiberbootEnabled", dw(0), dw(1))]),
+        toggle("hibernate-off", "performance", "Hibernation off", "Deletes the hibernation file to free disk space. Hibernate and Fast Startup stop working.", true, false, vec![Item { target: Target::Hibernate, on: st("off"), off: st("on") }]),
+        toggle("menu-delay", "performance", "Faster menus", "Menus open after 100 ms instead of 400 ms.", false, true, vec![reg("HKCU", r"Control Panel\Desktop", "MenuShowDelay", st("100"), st("400"))]),
+        toggle("startup-delay", "performance", "No delay for startup apps", "Starts your startup apps right after sign-in instead of waiting a few seconds.", false, true, vec![reg("HKCU", r"Software\Microsoft\Windows\CurrentVersion\Explorer\Serialize", "StartupDelayInMSec", dw(0), Val::Absent)]),
+        toggle(
+            "xbox-services",
+            "performance",
+            "Xbox services to Manual",
+            "Stops four Xbox helper services starting at boot. Leave on if you use the Xbox app or Game Pass.",
+            true,
+            false,
+            vec![svc_to("XblAuthManager", "demand", "demand"), svc_to("XblGameSave", "demand", "demand"), svc_to("XboxNetApiSvc", "demand", "demand"), svc_to("XboxGipSvc", "demand", "demand")],
+        ),
+        toggle("spooler-manual", "performance", "Print Spooler to Manual", "Starts printing support only when needed. Only if you never print.", true, false, vec![svc_to("Spooler", "demand", "auto")]),
+        toggle("fax-manual", "performance", "Fax to Manual", "Starts the fax service only when needed. Only if you never fax.", true, false, vec![svc_to("Fax", "demand", "demand")]),
+        toggle("cortana", "privacy", "Cortana off", "Turns off the Cortana assistant through policy.", true, false, vec![reg("HKLM", r"SOFTWARE\Policies\Microsoft\Windows\Windows Search", "AllowCortana", dw(0), Val::Absent)]),
+        toggle(
+            "office-telemetry",
+            "privacy",
+            "Office telemetry off",
+            "Stops Office sending usage data and feedback prompts.",
+            false,
+            false,
+            vec![
+                reg("HKCU", r"Software\Policies\Microsoft\office\16.0\common", "sendtelemetry", dw(3), Val::Absent),
+                reg("HKCU", r"Software\Policies\Microsoft\office\16.0\common", "qmenable", dw(0), Val::Absent),
+                reg("HKCU", r"Software\Policies\Microsoft\office\16.0\common\feedback", "enabled", dw(0), Val::Absent),
+            ],
+        ),
+        toggle(
+            "edge-telemetry",
+            "privacy",
+            "Edge: less data and clutter",
+            "Turns off Edge diagnostic data, shopping assistant, sidebar and startup boost.",
+            true,
+            false,
+            vec![
+                reg("HKLM", EDGE, "DiagnosticData", dw(0), Val::Absent),
+                reg("HKLM", EDGE, "EdgeShoppingAssistantEnabled", dw(0), Val::Absent),
+                reg("HKLM", EDGE, "HubsSidebarEnabled", dw(0), Val::Absent),
+                reg("HKLM", EDGE, "StartupBoostEnabled", dw(0), Val::Absent),
+            ],
+        ),
+        toggle("chrome-telemetry", "privacy", "Chrome usage reports off", "Stops Chrome sending usage statistics and crash reports.", true, false, vec![reg("HKLM", r"SOFTWARE\Policies\Google\Chrome", "MetricsReportingEnabled", dw(0), Val::Absent)]),
+        toggle("firefox-telemetry", "privacy", "Firefox telemetry off", "Stops Firefox sending telemetry.", true, false, vec![reg("HKLM", r"SOFTWARE\Policies\Mozilla\Firefox", "DisableTelemetry", dw(1), Val::Absent)]),
+        toggle("feedback-prompts", "privacy", "Feedback prompts off", "Windows stops asking you to rate things.", false, false, vec![reg("HKCU", r"Software\Microsoft\Siuf\Rules", "NumberOfSIUFInPeriod", dw(0), Val::Absent)]),
+        toggle("location-off", "privacy", "Location access off", "Blocks apps from using your location.", false, false, vec![reg("HKCU", &format!(r"{CONSENT}\location"), "Value", st("Deny"), st("Allow"))]),
+        toggle("app-diagnostics-off", "privacy", "App diagnostics access off", "Blocks apps from reading what other apps are doing.", false, false, vec![reg("HKCU", &format!(r"{CONSENT}\appDiagnostics"), "Value", st("Deny"), st("Allow"))]),
+        toggle(
+            "inking-typing",
+            "privacy",
+            "Inking and typing personalization off",
+            "Stops Windows learning from what you type and write.",
+            false,
+            false,
+            vec![reg("HKCU", r"Software\Microsoft\InputPersonalization", "RestrictImplicitTextCollection", dw(1), dw(0)), reg("HKCU", r"Software\Microsoft\InputPersonalization", "RestrictImplicitInkCollection", dw(1), dw(0))],
+        ),
+        toggle("tailored-experiences", "privacy", "Tailored experiences off", "Stops Windows using your diagnostic data to suggest things.", false, false, vec![reg("HKCU", r"Software\Microsoft\Windows\CurrentVersion\Privacy", "TailoredExperiencesWithDiagnosticDataEnabled", dw(0), dw(1))]),
+        toggle("classic-menu", "windows", "Classic right-click menu", "Brings back the full Windows 10 right-click menu. Takes effect after Explorer restarts or you sign out.", false, true, vec![regkey("HKCU", CLASSIC, st(""), Val::Absent)]),
+        toggle("widgets-off", "windows", "Widgets button off", "Hides the Widgets button on the taskbar.", false, false, vec![reg("HKCU", ADV, "TaskbarDa", dw(0), dw(1))]),
+        toggle("chat-off", "windows", "Chat icon off", "Hides the Chat button on the taskbar.", false, false, vec![reg("HKCU", ADV, "TaskbarMn", dw(0), dw(1))]),
+        toggle("taskbar-left", "windows", "Taskbar to the left", "Moves the Start button and icons to the left.", false, false, vec![reg("HKCU", ADV, "TaskbarAl", dw(0), dw(1))]),
+        toggle("search-icon", "windows", "Search box as an icon", "Shrinks the taskbar search box to an icon.", false, false, vec![reg("HKCU", r"Software\Microsoft\Windows\CurrentVersion\Search", "SearchboxTaskbarMode", dw(1), dw(2))]),
+        toggle("file-extensions", "windows", "Show file extensions", "Shows .exe, .pdf and so on after file names.", false, false, vec![reg("HKCU", ADV, "HideFileExt", dw(0), dw(1))]),
+        toggle("hidden-files", "windows", "Show hidden files", "Shows files and folders marked hidden.", false, false, vec![reg("HKCU", ADV, "Hidden", dw(1), dw(2))]),
+        toggle("onedrive-startup", "windows", "OneDrive does not start with Windows", "OneDrive stays installed and can be started by hand.", false, false, vec![approved_run("OneDrive")]),
+        toggle("utc-clock", "windows", "Hardware clock in UTC", "Only for dual boot with Linux, so both systems agree on the time.", true, true, vec![reg("HKLM", r"SYSTEM\CurrentControlSet\Control\TimeZoneInformation", "RealTimeIsUniversal", dw(1), Val::Absent)]),
     ]
 }
 
@@ -144,6 +245,7 @@ pub fn find(id: &str) -> Option<Tweak> {
 pub enum RawKind {
     Dword,
     Sz,
+    Bin,
     Other,
 }
 
@@ -156,6 +258,7 @@ pub fn parse_raw(kind: RawKind, bytes: &[u8]) -> Val {
             let w: Vec<u16> = bytes.chunks(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect();
             Val::Str(String::from_utf16_lossy(&w).trim_end_matches('\0').to_string())
         }
+        RawKind::Bin => Val::Bin(bytes.to_vec()),
         _ => Val::Other,
     }
 }
@@ -183,14 +286,43 @@ pub fn find_guid(text: &str) -> Option<String> {
     text.split(|c: char| c.is_whitespace() || c == '(' || c == ')').find(|w| is_guid(w)).map(|w| w.to_lowercase())
 }
 
-fn desired(tw: &Tweak, target: &str) -> Result<Vec<(Target, Val)>, String> {
+/// The items of a toggle. Nagle has one pair per network interface, found at run time.
+fn items_of(b: &dyn Backend, tw: &Tweak) -> Vec<Item> {
     match &tw.kind {
-        Kind::Toggle(items) => {
+        Kind::Toggle(items) => items.clone(),
+        Kind::Nagle => {
+            let mut v = Vec::new();
+            for id in b.interfaces() {
+                let path = format!(r"{NAGLE_IF}\{id}");
+                v.push(reg("HKLM", &path, "TcpAckFrequency", dw(1), Val::Absent));
+                v.push(reg("HKLM", &path, "TCPNoDelay", dw(1), Val::Absent));
+            }
+            v
+        }
+        Kind::Plan => Vec::new(),
+    }
+}
+
+/// Same value? Startup-approved binaries only compare the enabled/disabled bit.
+fn same(a: &Val, b: &Val) -> bool {
+    match (a, b) {
+        (Val::Bin(x), Val::Bin(y)) => x.first().map(|v| v & 1) == y.first().map(|v| v & 1),
+        _ => a == b,
+    }
+}
+
+fn desired(b: &dyn Backend, tw: &Tweak, target: &str) -> Result<Vec<(Target, Val)>, String> {
+    match &tw.kind {
+        Kind::Toggle(_) | Kind::Nagle => {
+            let items = items_of(b, tw);
             let on = match target {
                 "on" => true,
                 "off" => false,
                 _ => return Err(format!("Unknown setting '{target}'.")),
             };
+            if items.is_empty() {
+                return Err("Not available on this PC.".into());
+            }
             Ok(items.iter().map(|i| (i.target.clone(), if on { i.on.clone() } else { i.off.clone() })).collect())
         }
         Kind::Plan => {
@@ -207,13 +339,17 @@ pub fn state(b: &dyn Backend, tw: &Tweak) -> String {
             Ok(Val::Str(g)) => PLANS.iter().find(|p| p.2 == g.to_lowercase()).map(|p| p.0.to_string()).unwrap_or_else(|| "other".into()),
             _ => "unavailable".into(),
         },
-        Kind::Toggle(items) => {
+        Kind::Toggle(_) | Kind::Nagle => {
+            let items = items_of(b, tw);
+            if items.is_empty() {
+                return "unavailable".into();
+            }
             let mut all_on = true;
-            for i in items {
+            for i in &items {
                 match b.read(&i.target) {
                     Ok(Val::Absent) if matches!(i.target, Target::Service { .. }) => return "unavailable".into(),
                     Ok(v) => {
-                        if v != i.on {
+                        if !same(&v, &i.on) {
                             all_on = false;
                         }
                     }
@@ -236,7 +372,7 @@ pub fn apply(b: &dyn Backend, j: &mut Journal, tw: &Tweak, target: &str, now: u6
     if tw.admin && !b.is_admin() {
         return Err(ADMIN_MSG.into());
     }
-    let want = desired(tw, target)?;
+    let want = desired(b, tw, target)?;
     let mut changes: Vec<Change> = Vec::new();
     let mut writes: Vec<(Target, Val)> = Vec::new();
     for (t, v) in want {
@@ -247,7 +383,7 @@ pub fn apply(b: &dyn Backend, j: &mut Journal, tw: &Tweak, target: &str, now: u6
         if matches!(t, Target::Service { .. }) && cur == Val::Absent {
             return Err(format!("{}: not available on this PC.", tw.name));
         }
-        if cur == v {
+        if same(&cur, &v) {
             continue;
         }
         changes.push(Change { target: t.clone(), old: cur });
@@ -334,19 +470,19 @@ pub const PROFILES: &[ProfileDef] = &[
         id: "gaming",
         name: "Gaming",
         blurb: "Most speed for games: faster power plan, Game Mode, less in the background.",
-        items: &[("power-plan", "high"), ("game-mode", "on"), ("gamedvr", "on"), ("visual-fx", "on"), ("background-apps", "on"), ("mouse-accel", "on"), ("advertising-id", "on"), ("tips-ads", "on"), ("bing", "on"), ("copilot", "on")],
+        items: &[("power-plan", "high"), ("game-mode", "on"), ("gamedvr", "on"), ("visual-fx", "on"), ("background-apps", "on"), ("mouse-accel", "on"), ("advertising-id", "on"), ("tips-ads", "on"), ("bing", "on"), ("copilot", "on"), ("net-throttling", "on"), ("nagle", "on"), ("menu-delay", "on")],
     },
     ProfileDef {
         id: "work",
         name: "Work",
         blurb: "Steady and quiet for office work: normal power, search kept, fewer distractions.",
-        items: &[("power-plan", "balanced"), ("gamedvr", "on"), ("tips-ads", "on"), ("bing", "on"), ("copilot", "on"), ("background-apps", "off"), ("search-indexing", "off"), ("visual-fx", "off")],
+        items: &[("power-plan", "balanced"), ("gamedvr", "on"), ("tips-ads", "on"), ("bing", "on"), ("copilot", "on"), ("background-apps", "off"), ("search-indexing", "off"), ("visual-fx", "off"), ("office-telemetry", "on"), ("edge-telemetry", "on"), ("chrome-telemetry", "on"), ("firefox-telemetry", "on")],
     },
     ProfileDef {
         id: "balanced",
         name: "Balanced",
         blurb: "A light touch: normal power, Game Mode on, no ads in Start. Nothing else changes.",
-        items: &[("power-plan", "balanced"), ("game-mode", "on"), ("tips-ads", "on")],
+        items: &[("power-plan", "balanced"), ("game-mode", "on"), ("tips-ads", "on"), ("file-extensions", "on"), ("feedback-prompts", "on")],
     },
 ];
 
@@ -361,7 +497,7 @@ fn label(tw: &Tweak, v: &str) -> String {
             "unavailable" => "Unavailable".into(),
             _ => PLANS.iter().find(|p| p.0 == v).map(|p| p.1.to_string()).unwrap_or_else(|| v.to_string()),
         },
-        Kind::Toggle(_) => match v {
+        Kind::Toggle(_) | Kind::Nagle => match v {
             "on" => "Applied".into(),
             "off" => "Not applied".into(),
             _ => "Unavailable".into(),
@@ -451,7 +587,7 @@ pub fn views(b: &dyn Backend, j: &Journal) -> Vec<TweakView> {
             id: t.id.into(),
             group: t.group.into(),
             name: t.name.into(),
-            desc: t.desc.into(),
+            desc: if t.id == "hibernate-off" { hiber_desc(t.desc) } else { t.desc.into() },
             admin: t.admin,
             restart: t.restart,
             kind: if matches!(t.kind, Kind::Plan) { "choice".into() } else { "toggle".into() },
@@ -460,6 +596,42 @@ pub fn views(b: &dyn Backend, j: &Journal) -> Vec<TweakView> {
             changed: j.has(t.id),
         })
         .collect()
+}
+
+/// "1.5 GB" style size.
+pub fn format_size(bytes: u64) -> String {
+    const UNITS: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
+    let mut v = bytes as f64;
+    let mut u = 0;
+    while v >= 1024.0 && u < UNITS.len() - 1 {
+        v /= 1024.0;
+        u += 1;
+    }
+    if u == 0 { format!("{bytes} B") } else { format!("{v:.1} {}", UNITS[u]) }
+}
+
+fn hiber_desc(base: &str) -> String {
+    match std::fs::metadata(r"C:\hiberfil.sys") {
+        Ok(m) if m.len() > 0 => format!("{base} hiberfil.sys is {} now.", format_size(m.len())),
+        _ => base.to_string(),
+    }
+}
+
+/// Value of one line of `bcdedit /enum {current}` output, e.g. "useplatformclock   Yes".
+/// Absent when the line is missing. "yes"/"no" come back as "Yes"/"No".
+pub fn parse_bcd(text: &str, name: &str) -> Val {
+    for line in text.lines() {
+        let mut it = line.trim().splitn(2, char::is_whitespace);
+        if it.next().map(|k| k.eq_ignore_ascii_case(name)) == Some(true) {
+            let v = it.next().unwrap_or("").trim();
+            return match v.to_lowercase().as_str() {
+                "yes" => Val::Str("Yes".into()),
+                "no" => Val::Str("No".into()),
+                _ => Val::Str(v.to_string()),
+            };
+        }
+    }
+    Val::Absent
 }
 
 // ---------- the real system ----------
@@ -476,6 +648,18 @@ impl Backend for Sys {
     fn is_admin(&self) -> bool {
         sys_admin()
     }
+    fn interfaces(&self) -> Vec<String> {
+        sys_interfaces()
+    }
+}
+
+#[cfg(not(windows))]
+fn sys_interfaces() -> Vec<String> {
+    Vec::new()
+}
+#[cfg(windows)]
+fn sys_interfaces() -> Vec<String> {
+    win::interfaces()
 }
 
 #[cfg(not(windows))]
@@ -509,8 +693,8 @@ mod win {
     use std::io::ErrorKind;
     use std::os::windows::process::CommandExt;
     use std::process::Command;
-    use winreg::enums::{HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, KEY_READ, KEY_SET_VALUE, KEY_WRITE, REG_DWORD, REG_SZ};
-    use winreg::RegKey;
+    use winreg::enums::{HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, KEY_READ, KEY_SET_VALUE, KEY_WRITE, REG_BINARY, REG_DWORD, REG_SZ};
+    use winreg::{RegKey, RegValue};
 
     fn hive(name: &str) -> RegKey {
         RegKey::predef(if name == "HKLM" { HKEY_LOCAL_MACHINE } else { HKEY_CURRENT_USER })
@@ -540,6 +724,8 @@ mod win {
                     RawKind::Dword
                 } else if v.vtype == REG_SZ {
                     RawKind::Sz
+                } else if v.vtype == REG_BINARY {
+                    RawKind::Bin
                 } else {
                     RawKind::Other
                 };
@@ -573,7 +759,54 @@ mod win {
                 let s: String = s.clone();
                 key.set_value(name, &s).map_err(io_err)
             }
+            Val::Bin(b) => {
+                let (key, _) = hive(h).create_subkey_with_flags(path, KEY_WRITE).map_err(io_err)?;
+                key.set_raw_value(name, &RegValue { bytes: b.clone(), vtype: REG_BINARY }).map_err(io_err)
+            }
             Val::Other => Err("Cannot write this kind of value.".into()),
+        }
+    }
+
+    fn key_read(h: &str, path: &str) -> Result<Val, String> {
+        match hive(h).open_subkey_with_flags(path, KEY_READ) {
+            Ok(k) => Ok(Val::Str(k.get_value::<String, _>("").unwrap_or_default())),
+            Err(e) if e.kind() == ErrorKind::NotFound => Ok(Val::Absent),
+            Err(e) => Err(e.to_string()),
+        }
+    }
+
+    fn key_write(h: &str, path: &str, v: &Val) -> Result<(), String> {
+        match v {
+            Val::Absent => {
+                // Only the key we made is removed; its parent goes too if that leaves it empty.
+                match hive(h).delete_subkey(path) {
+                    Ok(()) => {}
+                    Err(e) if e.kind() == ErrorKind::NotFound => return Ok(()),
+                    Err(e) => return Err(io_err(e)),
+                }
+                if let Some((parent, _)) = path.rsplit_once('\\') {
+                    let _ = hive(h).delete_subkey(parent);
+                }
+                Ok(())
+            }
+            Val::Str(s) => {
+                let (key, _) = hive(h).create_subkey_with_flags(path, KEY_WRITE).map_err(io_err)?;
+                key.set_value("", &s.clone()).map_err(io_err)
+            }
+            _ => Err("Cannot write this kind of value.".into()),
+        }
+    }
+
+    pub fn interfaces() -> Vec<String> {
+        hive("HKLM").open_subkey_with_flags(NAGLE_IF, KEY_READ).map(|k| k.enum_keys().filter_map(|n| n.ok()).collect()).unwrap_or_default()
+    }
+
+    fn hibernate_read() -> Result<Val, String> {
+        match reg_read("HKLM", r"SYSTEM\CurrentControlSet\Control\Power", "HibernateEnabled")? {
+            Val::Dword(0) => Ok(Val::Str("off".into())),
+            Val::Dword(_) => Ok(Val::Str("on".into())),
+            Val::Absent => Ok(Val::Str("off".into())),
+            _ => Ok(Val::Other),
         }
     }
 
@@ -630,6 +863,13 @@ mod win {
                 let out = run("powercfg", &["/getactivescheme"])?;
                 find_guid(&out).map(Val::Str).ok_or_else(|| "Could not read the power plan.".to_string())
             }
+            Target::RegKey { hive, path } => key_read(hive, path),
+            Target::Bcd { name } => {
+                let out = run("bcdedit", &["/enum", "{current}"])?;
+                Ok(parse_bcd(&out, name))
+            }
+            Target::Hibernate => hibernate_read(),
+            Target::Dns { .. } => Err("DNS is handled on the Network page".into()),
         }
     }
 
@@ -646,6 +886,17 @@ mod win {
                 power_ensure(&g)?;
                 run("powercfg", &["/setactive", &g]).map(|_| ())
             }
+            Target::RegKey { hive, path } => key_write(hive, path, v),
+            Target::Bcd { name } => match v {
+                Val::Absent => run("bcdedit", &["/deletevalue", name]).map(|_| ()),
+                Val::Str(s) if s == "Yes" || s == "No" => run("bcdedit", &["/set", name, s]).map(|_| ()),
+                _ => Err("Cannot set this boot option.".into()),
+            },
+            Target::Hibernate => match v {
+                Val::Str(s) if s == "on" || s == "off" => run("powercfg", &["/hibernate", s]).map(|_| ()),
+                _ => Err("Cannot set hibernation.".into()),
+            },
+            Target::Dns { .. } => Err("DNS is handled on the Network page".into()),
         }
     }
 }
@@ -694,6 +945,9 @@ mod tests {
         fn is_admin(&self) -> bool {
             self.admin
         }
+        fn interfaces(&self) -> Vec<String> {
+            vec!["{aaa}".into(), "{bbb}".into()]
+        }
     }
 
     fn ok_persist() -> impl FnMut(&Journal) -> Result<(), String> {
@@ -704,7 +958,51 @@ mod tests {
         match &tw.kind {
             Kind::Toggle(items) => items[i].target.clone(),
             Kind::Plan => Target::Power,
+            Kind::Nagle => Target::Power,
         }
+    }
+
+    #[test]
+    fn bcd_parser() {
+        let t = "Windows Boot Loader\n-------\nidentifier  {current}\nuseplatformclock        yes\ndisabledynamictick      No\n";
+        assert_eq!(parse_bcd(t, "useplatformclock"), Val::Str("Yes".into()));
+        assert_eq!(parse_bcd(t, "disabledynamictick"), Val::Str("No".into()));
+        assert_eq!(parse_bcd(t, "tscsyncpolicy"), Val::Absent);
+    }
+
+    #[test]
+    fn sizes() {
+        assert_eq!(format_size(512), "512 B");
+        assert_eq!(format_size(1536 * 1024 * 1024), "1.5 GB");
+    }
+
+    #[test]
+    fn ids_unique() {
+        let mut ids: Vec<&str> = catalog().iter().map(|t| t.id).collect();
+        let n = ids.len();
+        ids.sort();
+        ids.dedup();
+        assert_eq!(ids.len(), n);
+    }
+
+    #[test]
+    fn nagle_has_item_per_interface_and_undoes() {
+        let b = Mock::new(true);
+        let tw = find("nagle").unwrap();
+        assert_eq!(state(&b, &tw), "off");
+        let mut j = Journal::default();
+        assert!(apply(&b, &mut j, &tw, "on", 1, &mut ok_persist()).unwrap());
+        assert_eq!(j.entries[0].changes.len(), 4);
+        assert_eq!(state(&b, &tw), "on");
+        undo_tweak(&b, &mut j, &tw, &mut ok_persist()).unwrap();
+        assert_eq!(state(&b, &tw), "off");
+    }
+
+    #[test]
+    fn startup_approved_compares_enabled_bit_only() {
+        assert!(same(&bin(3), &Val::Bin(vec![3, 0, 0, 0, 9, 9, 9, 9, 9, 9, 9, 9])));
+        assert!(!same(&bin(3), &bin(2)));
+        assert!(same(&bin(2), &bin(6)));
     }
 
     #[test]

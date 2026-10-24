@@ -23,7 +23,7 @@ export interface OptimizeHooks {
 
 const ADMIN_TIP = "Restart Disk Map as administrator to change this";
 const SECTIONS: [string, string][] = [
-  ["overview", "Overview"], ["profiles", "Profiles"], ["performance", "Performance"], ["privacy", "Privacy"],
+  ["overview", "Overview"], ["profiles", "Profiles"], ["performance", "Performance"], ["privacy", "Privacy"], ["windows", "Windows"],
   ["startup", "Startup"], ["apps", "Apps"], ["processes", "Processes"],
 ];
 
@@ -167,6 +167,7 @@ function render() {
   else if (section === "profiles") body = profilesHtml();
   else if (section === "performance") body = tweaksHtml("performance");
   else if (section === "privacy") body = tweaksHtml("privacy");
+  else if (section === "windows") body = tweaksHtml("windows");
   else if (section === "startup") body = startupHtml();
   else if (section === "apps") body = appsHtml();
   else body = processesHtml();
