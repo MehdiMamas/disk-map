@@ -23,11 +23,12 @@ Get the latest installer from the [Releases page](https://github.com/MehdiMamas/
 - Squarified treemap plus a sorted list with size bars, breadcrumb and back button. Children under 0.5% of their parent are grouped into "(other)".
 - Known hogs (Xcode DerivedData, CoreSimulator, Docker, node_modules, Library/Caches and AppData caches, .gradle, .npm, pnpm store, Cargo `target`) get a tag with a plain note and a "safe to clear?" value. Rules live in `src-tauri/src/hogs.rs`.
 - Reveal in Finder/Explorer. Move to Trash after a confirm dialog (system Trash/Recycle Bin via the `trash` crate; nothing is ever deleted permanently).
+- Update notifications: a few seconds after launch (and on "Check for updates") the app asks GitHub for the latest release and offers its download when it is newer.
 - macOS: if folders are blocked, a hint explains how to grant Full Disk Access.
 
 ## Privacy
 
-Disk Map works fully offline. It makes no network requests and sends nothing anywhere; scans stay on your machine.
+Scans stay on your machine and nothing about your files is ever sent anywhere. The only network request is the update check: an anonymous GET of the public GitHub latest-release page, with no data about you or your disks.
 
 ## Design choice: drill-down
 The scan keeps the full tree in memory in the Rust process and drill-down only re-prunes it, so clicking into a folder is instant and costs no disk I/O. To keep memory bounded, directories are all kept but files under 1 MiB are folded into one "(small files)" entry per directory (a 600k-file home scan stays small). The trade-off: the view can be stale until you rescan, and a rescan is the only way to see new files. Trashing an item updates the in-memory tree directly.
