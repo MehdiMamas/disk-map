@@ -1,0 +1,95 @@
+pub mod hogs;
+pub mod scanner;
+
+use scanner::{Node, ViewNode, PRUNE_FRACTION};
+use serde::Serialize;
+use std::path::{Path, PathBuf};
+use std::sync::Mutex;
+use tauri::Emitter;
+
+#[derive(Serialize)]
+struct ScanResult {
+    root: ViewNode,
+    errors: u64,
+    permission_denied: u64,
+    denied_examples: Vec<String>,
+    other_fs_skipped: u64,
+    elapsed_ms: u64,
+}
+
+#[tauri::command]
+fn home_dir() -> String {
+    dirs::home_dir().map(|p| p.to_string_lossy().into_owned()).unwrap_or_else(|| "/".into())
+}
+
+#[tauri::command]
+async fn scan(app: tauri::AppHandle, path: String) -> Result<ScanResult, String> {
+    let root = PathBuf::from(&path);
+    if !root.is_dir() {
+        return Err(format!("{path} is not a folder"));
+    }
+    let started = std::time::Instant::now();
+    let r2 = root.clone();
+    let out = tauri::async_runtime::spawn_blocking(move || {
+        scanner::scan_dir(&r2, &scanner::Options::default(), |p| {
+            let _ = app.emit("scan-progress", p);
+        })
+    })
+    .await
+    .map_err(|e| e.to_string())?;
+    let view = scanner::prune(&out.tree, &root, PRUNE_FRACTION, 1);
+    let res = ScanResult {
+        root: view,
+        errors: out.errors,
+        permission_denied: out.permission_denied,
+        denied_examples: out.denied_examples,
+        other_fs_skipped: out.other_fs_skipped,
+        elapsed_ms: started.elapsed().as_millis() as u64,
+    };
+    SCAN_STORE.lock().unwrap().replace((root, out.tree));
+    Ok(res)
+}
+
+/// The full scanned tree stays in memory so drill-down never rescans.
+static SCAN_STORE: Mutex<Option<(PathBuf, Node)>> = Mutex::new(None);
+
+#[tauri::command]
+fn view(path: String) -> Result<ViewNode, String> {
+    let guard = SCAN_STORE.lock().unwrap();
+    let (root, tree) = guard.as_ref().ok_or("nothing scanned yet")?;
+    let p = Path::new(&path);
+    let node = scanner::find(tree, root, p).ok_or("folder not in the scan")?;
+    Ok(scanner::prune(node, p, PRUNE_FRACTION, 1))
+}
+
+#[tauri::command]
+fn reveal(path: String) -> Result<(), String> {
+    use std::process::Command;
+    #[cfg(target_os = "macos")]
+    let r = Command::new("open").arg("-R").arg(&path).spawn();
+    #[cfg(target_os = "windows")]
+    let r = Command::new("explorer").arg(format!("/select,{}", path.replace('/', "\\"))).spawn();
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let r = Command::new("xdg-open").arg(Path::new(&path).parent().unwrap_or(Path::new("/"))).spawn();
+    r.map(|_| ()).map_err(|e| e.to_string())
+}
+
+/// Moves to the system Trash (never a permanent delete) and updates the in-memory tree.
+#[tauri::command]
+fn move_to_trash(path: String) -> Result<(), String> {
+    trash::delete(&path).map_err(|e| e.to_string())?;
+    if let Some((root, tree)) = SCAN_STORE.lock().unwrap().as_mut() {
+        scanner::remove(tree, root, Path::new(&path));
+    }
+    Ok(())
+}
+
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
+pub fn run() {
+    tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
+        .invoke_handler(tauri::generate_handler![home_dir, scan, view, reveal, move_to_trash])
+        .run(tauri::generate_context!())
+        .expect("error while running Disk Map");
+}
+
