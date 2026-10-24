@@ -761,7 +761,7 @@ mod win {
             }
             Val::Bin(b) => {
                 let (key, _) = hive(h).create_subkey_with_flags(path, KEY_WRITE).map_err(io_err)?;
-                key.set_raw_value(name, &RegValue { bytes: b.clone(), vtype: REG_BINARY }).map_err(io_err)
+                key.set_raw_value(name, &RegValue { bytes: b.clone().into(), vtype: REG_BINARY }).map_err(io_err)
             }
             Val::Other => Err("Cannot write this kind of value.".into()),
         }
