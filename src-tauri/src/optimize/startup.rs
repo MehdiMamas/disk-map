@@ -50,6 +50,30 @@ pub fn parse_disabled(out: &str) -> Vec<String> {
         .collect()
 }
 
+/// Names from the osascript login items answer: "Dropbox, Slack".
+pub fn parse_login_items(out: &str) -> Vec<String> {
+    out.trim().split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect()
+}
+
+pub const LOGIN_ITEMS_NOTE: &str = "Could not read Login Items. Open System Settings > General > Login Items to see them.";
+
+/// Login Items on macOS (read-only). Err carries the note to show.
+#[cfg(target_os = "macos")]
+pub fn login_items() -> Result<Vec<String>, String> {
+    let o = std::process::Command::new("/usr/bin/osascript")
+        .args(["-e", "tell application \"System Events\" to get the name of every login item"])
+        .output()
+        .map_err(|_| LOGIN_ITEMS_NOTE.to_string())?;
+    if !o.status.success() {
+        return Err(LOGIN_ITEMS_NOTE.into());
+    }
+    Ok(parse_login_items(&String::from_utf8_lossy(&o.stdout)))
+}
+#[cfg(not(target_os = "macos"))]
+pub fn login_items() -> Result<Vec<String>, String> {
+    Ok(Vec::new())
+}
+
 #[cfg(windows)]
 mod imp {
     use super::*;
@@ -217,7 +241,7 @@ mod imp {
                     source: label.into(),
                     enabled: !disabled.contains(&lab),
                     can_toggle: toggle,
-                    note: if toggle { None } else { Some("Managed by macOS settings. Use Login Items to change it.".into()) },
+                    note: if toggle { None } else { Some("Needs admin".into()) },
                     reason: None,
                 });
             }
@@ -312,6 +336,14 @@ mod tests {
     fn launchctl_disabled_parse() {
         let out = "disabled services = {\n\t\"com.a.b\" => disabled\n\t\"com.c.d\" => enabled\n\t\"com.e.f\" => disabled,\n}";
         assert_eq!(parse_disabled(out), vec!["com.a.b".to_string(), "com.e.f".to_string()]);
+    }
+
+    #[test]
+    fn login_items_parse() {
+        assert_eq!(parse_login_items("Dropbox, Slack
+"), vec!["Dropbox", "Slack"]);
+        assert!(parse_login_items("
+").is_empty());
     }
 
     #[test]

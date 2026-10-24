@@ -95,6 +95,53 @@ fn num_after(line: &str, key: &str) -> Option<u32> {
     digits.parse().ok()
 }
 
+/// Network services from `networksetup -listallnetworkservices`. Disabled ones start with `*`.
+pub fn parse_services(out: &str) -> Vec<String> {
+    out.lines()
+        .map(|l| l.trim())
+        .filter(|l| !l.is_empty() && !l.starts_with('*') && !l.starts_with("An asterisk"))
+        .map(|l| l.to_string())
+        .collect()
+}
+
+/// DNS servers from `networksetup -getdnsservers`. `None` means automatic.
+pub fn parse_getdns(out: &str) -> Option<Vec<String>> {
+    let t = out.trim();
+    if t.is_empty() || t.contains("aren't any DNS Servers") {
+        return None;
+    }
+    let v: Vec<String> = t.lines().map(|l| l.trim().to_string()).filter(|l| !l.is_empty()).collect();
+    if v.is_empty() { None } else { Some(v) }
+}
+
+/// Parses macOS `ping -c N` output.
+pub fn parse_ping_mac(out: &str) -> PingResult {
+    let mut r = PingResult::default();
+    for line in out.lines() {
+        let l = line.trim();
+        if l.contains("packets transmitted") {
+            r.sent = l.split_whitespace().next().and_then(|x| x.parse().ok());
+            r.received = l.split(',').nth(1).and_then(|p| p.split_whitespace().next()).and_then(|x| x.parse().ok());
+            r.loss_pct = l.split(',').find(|p| p.contains("packet loss")).and_then(|p| p.trim().split('%').next().and_then(|x| x.parse::<f64>().ok())).map(|x| x.round() as u32);
+        } else if l.starts_with("round-trip") || l.starts_with("rtt") {
+            if let Some(vals) = l.split('=').nth(1) {
+                let n: Vec<f64> = vals.trim().split_whitespace().next().unwrap_or("").split('/').filter_map(|x| x.parse().ok()).collect();
+                if n.len() >= 3 {
+                    r.min_ms = Some(n[0].round() as u32);
+                    r.avg_ms = Some(n[1].round() as u32);
+                    r.max_ms = Some(n[2].round() as u32);
+                }
+            }
+        }
+    }
+    if r.sent.is_none() {
+        let lines: Vec<&str> = out.lines().filter(|l| !l.trim().is_empty()).collect();
+        let start = lines.len().saturating_sub(4);
+        r.raw = lines[start..].join("\n");
+    }
+    r
+}
+
 /// Parses English `ping` output (Windows style).
 pub fn parse_ping(out: &str) -> PingResult {
     let mut r = PingResult::default();
@@ -202,7 +249,20 @@ mod win {
 pub fn list_adapters() -> Result<Vec<Adapter>, String> {
     win::adapters()
 }
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
+pub fn list_adapters() -> Result<Vec<Adapter>, String> {
+    let run = |args: &[&str]| -> Result<String, String> {
+        let out = std::process::Command::new("/usr/sbin/networksetup").args(args).output().map_err(|e| e.to_string())?;
+        Ok(format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr)))
+    };
+    let mut list = Vec::new();
+    for name in parse_services(&run(&["-listallnetworkservices"])?) {
+        let servers = parse_getdns(&run(&["-getdnsservers", &name])?);
+        list.push(Adapter { name, dhcp: servers.is_none(), servers: servers.unwrap_or_default() });
+    }
+    Ok(list)
+}
+#[cfg(not(any(windows, target_os = "macos")))]
 pub fn list_adapters() -> Result<Vec<Adapter>, String> {
     Ok(Vec::new())
 }
@@ -225,7 +285,31 @@ pub fn dns_write(adapter: &str, v: &Val) -> Result<(), String> {
     }
     Ok(())
 }
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
+pub fn dns_write(adapter: &str, v: &Val) -> Result<(), String> {
+    if !list_adapters()?.iter().any(|a| a.name == adapter) {
+        return Err("Unknown network adapter.".into());
+    }
+    let Val::Str(s) = v else { return Err("Cannot set DNS to this value.".into()) };
+    let mut args: Vec<String> = vec!["-setdnsservers".into(), adapter.into()];
+    if s == "dhcp" {
+        args.push("Empty".into());
+    } else {
+        let ips: Vec<&str> = s.split(',').filter(|x| !x.is_empty()).collect();
+        if ips.is_empty() || ips.len() > 4 || !ips.iter().all(|i| i.parse::<std::net::IpAddr>().is_ok()) {
+            return Err("Not a valid DNS server list.".into());
+        }
+        args.extend(ips.iter().map(|i| i.to_string()));
+    }
+    let out = std::process::Command::new("/usr/sbin/networksetup").args(&args).output().map_err(|e| e.to_string())?;
+    let text = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+    if out.status.success() && !text.contains("Error") && !text.contains("requires admin") {
+        Ok(())
+    } else {
+        Err(format!("macOS refused the change: {}", text.trim()))
+    }
+}
+#[cfg(not(any(windows, target_os = "macos")))]
 pub fn dns_write(_adapter: &str, _v: &Val) -> Result<(), String> {
     Err("Windows only for now.".into())
 }
@@ -234,7 +318,11 @@ pub fn dns_write(_adapter: &str, _v: &Val) -> Result<(), String> {
 pub fn flush_dns() -> Result<(), String> {
     win::run("ipconfig", &["/flushdns".to_string()]).map(|_| ())
 }
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
+pub fn flush_dns() -> Result<(), String> {
+    Err("Needs admin: run `sudo dscacheutil -flushcache; sudo killall -HUP mDNSResponder` in Terminal.".into())
+}
+#[cfg(not(any(windows, target_os = "macos")))]
 pub fn flush_dns() -> Result<(), String> {
     Err("Windows only for now.".into())
 }
@@ -248,7 +336,15 @@ pub fn ping(host: &str) -> Result<PingResult, String> {
     let out = std::process::Command::new("ping").args(["-n", "4", host]).creation_flags(0x0800_0000).output().map_err(|e| e.to_string())?;
     Ok(parse_ping(&String::from_utf8_lossy(&out.stdout)))
 }
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
+pub fn ping(host: &str) -> Result<PingResult, String> {
+    if !valid_host(host) {
+        return Err("That is not a valid host name or address.".into());
+    }
+    let out = std::process::Command::new("/sbin/ping").args(["-c", "4", host]).output().map_err(|e| e.to_string())?;
+    Ok(parse_ping_mac(&String::from_utf8_lossy(&out.stdout)))
+}
+#[cfg(not(any(windows, target_os = "macos")))]
 pub fn ping(host: &str) -> Result<PingResult, String> {
     if !valid_host(host) {
         return Err("That is not a valid host name or address.".into());
@@ -268,6 +364,23 @@ pub fn run_powershell(_script: &str) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mac_services_and_dns() {
+        let out = "An asterisk (*) denotes that a network service is disabled.\nWi-Fi\n*Thunderbolt Bridge\nUSB 10/100 LAN\n";
+        assert_eq!(parse_services(out), vec!["Wi-Fi", "USB 10/100 LAN"]);
+        assert_eq!(parse_getdns("There aren't any DNS Servers set on Wi-Fi.\n"), None);
+        assert_eq!(parse_getdns("1.1.1.1\n1.0.0.1\n"), Some(vec!["1.1.1.1".to_string(), "1.0.0.1".to_string()]));
+    }
+
+    #[test]
+    fn mac_ping_parse() {
+        let out = "PING x (1.2.3.4): 56 data bytes\n\n--- x ping statistics ---\n4 packets transmitted, 3 packets received, 25.0% packet loss\nround-trip min/avg/max/stddev = 10.1/12.6/15.2/2.0 ms\n";
+        let r = parse_ping_mac(out);
+        assert_eq!((r.sent, r.received, r.loss_pct), (Some(4), Some(3), Some(25)));
+        assert_eq!((r.min_ms, r.avg_ms, r.max_ms), (Some(10), Some(13), Some(15)));
+        assert!(parse_ping_mac("ping: cannot resolve x: Unknown host\n").raw.contains("Unknown host"));
+    }
 
     #[test]
     fn host_validation() {

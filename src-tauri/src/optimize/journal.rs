@@ -19,6 +19,8 @@ pub enum Target {
     Hibernate,
     /// DNS servers of one network adapter: Str("dhcp") or Str("1.1.1.1,1.0.0.1").
     Dns { adapter: String },
+    /// A macOS `defaults` key. `ty` is bool, int, float or string.
+    Defaults { domain: String, key: String, ty: String },
 }
 
 /// A value as we saw it. `Other` is a value of a type we do not handle; we never overwrite it.
@@ -166,6 +168,10 @@ mod tests {
                 Change { target: Target::Bcd { name: "useplatformclock".into() }, old: Val::Str("Yes".into()) },
                 Change { target: Target::Hibernate, old: Val::Str("on".into()) },
                 Change { target: Target::Dns { adapter: "Wi-Fi".into() }, old: Val::Str("dhcp".into()) },
+                Change {
+                    target: Target::Defaults { domain: "com.apple.dock".into(), key: "launchanim".into(), ty: "bool".into() },
+                    old: Val::Absent,
+                },
                 Change { target: Target::Power, old: Val::Bin(vec![3, 0, 0]) },
             ],
         );

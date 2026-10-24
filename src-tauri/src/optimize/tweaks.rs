@@ -237,7 +237,73 @@ pub fn catalog() -> Vec<Tweak> {
 }
 
 pub fn find(id: &str) -> Option<Tweak> {
-    catalog().into_iter().find(|t| t.id == id)
+    catalog().into_iter().chain(mac_catalog()).find(|t| t.id == id)
+}
+
+// ---------- macOS catalog ----------
+
+fn dfl(domain: &str, key: &str, ty: &str, on: Val) -> Item {
+    Item { target: Target::Defaults { domain: domain.into(), key: key.into(), ty: ty.into() }, on, off: Val::Absent }
+}
+fn dbool(domain: &str, key: &str, on: bool) -> Item {
+    dfl(domain, key, "bool", dw(on as u32))
+}
+fn dint(domain: &str, key: &str, n: u32) -> Item {
+    dfl(domain, key, "int", dw(n))
+}
+fn dflt(domain: &str, key: &str, v: &str) -> Item {
+    dfl(domain, key, "float", st(v))
+}
+fn dstr(domain: &str, key: &str, v: &str) -> Item {
+    dfl(domain, key, "string", st(v))
+}
+
+const NSG: &str = "NSGlobalDomain";
+const DOCK: &str = "com.apple.dock";
+const FINDER: &str = "com.apple.finder";
+
+/// Tweaks whose change shows only after the Dock or Finder restarts. The user restarts them
+/// with a button; nothing is ever killed automatically.
+pub const RELAUNCH: &[&str] = &[
+    "mac-dock-speed",
+    "mac-launch-anim",
+    "mac-expose-anim",
+    "mac-minimize-effect",
+    "mac-show-recents",
+    "mac-finder-anim",
+    "mac-hidden-files",
+    "mac-pathbar",
+    "mac-statusbar",
+];
+
+/// Reversible per-user settings for macOS. Turning one off deletes the key again, which
+/// brings back the system default.
+pub fn mac_catalog() -> Vec<Tweak> {
+    vec![
+        toggle("mac-window-anim", "performance", "No window opening animations", "Windows and dialogs appear at once.", false, false, vec![dbool(NSG, "NSAutomaticWindowAnimationsEnabled", false)]),
+        toggle("mac-resize-time", "performance", "Instant window resizing", "Windows resize without the slow-down.", false, false, vec![dflt(NSG, "NSWindowResizeTime", "0.001")]),
+        toggle("mac-dock-speed", "performance", "Dock shows and hides instantly", "No delay before the Dock appears when it hides itself.", false, false, vec![dflt(DOCK, "autohide-delay", "0"), dflt(DOCK, "autohide-time-modifier", "0.3")]),
+        toggle("mac-launch-anim", "performance", "No app bounce in the Dock", "Apps do not bounce while they open.", false, false, vec![dbool(DOCK, "launchanim", false)]),
+        toggle("mac-expose-anim", "performance", "Faster Mission Control", "Shortens the Mission Control animation.", false, false, vec![dflt(DOCK, "expose-animation-duration", "0.1")]),
+        toggle("mac-minimize-effect", "performance", "Simple minimize effect", "Windows shrink into the Dock instead of the genie effect.", false, false, vec![dstr(DOCK, "mineffect", "scale")]),
+        toggle("mac-finder-anim", "performance", "No Finder animations", "Finder opens and closes windows without effects.", false, false, vec![dbool(FINDER, "DisableAllAnimations", true)]),
+        toggle("mac-ds-store", "performance", "No .DS_Store files on network and USB drives", "Stops Finder from leaving hidden files on drives that are not this Mac.", false, false, vec![dbool("com.apple.desktopservices", "DSDontWriteNetworkStores", true), dbool("com.apple.desktopservices", "DSDontWriteUSBStores", true)]),
+        toggle("mac-no-icloud-save", "performance", "Save new documents on this Mac", "The save dialog starts on this Mac instead of iCloud.", false, false, vec![dbool(NSG, "NSDocumentSaveNewDocumentsToCloud", false)]),
+        toggle("mac-reduce-transparency", "performance", "Reduce transparency", "Less blur in menus and windows. macOS may refuse this change.", false, false, vec![dbool("com.apple.universalaccess", "reduceTransparency", true)]),
+        toggle("mac-reduce-motion", "performance", "Reduce motion", "Replaces slides and zooms with fades. macOS may refuse this change.", false, false, vec![dbool("com.apple.universalaccess", "reduceMotion", true)]),
+        toggle("mac-personalized-ads", "privacy", "No personalized Apple ads", "Apple does not use your data to pick ads.", false, false, vec![dbool("com.apple.AdLib", "allowApplePersonalizedAdvertising", false)]),
+        toggle("mac-crash-dialog", "privacy", "No crash report dialogs", "A crashed app does not ask to send a report.", false, false, vec![dstr("com.apple.CrashReporter", "DialogType", "none")]),
+        toggle("mac-siri-assistant", "privacy", "Turn off Siri", "Turns off the assistant. Shown as unavailable when macOS does not allow reading it.", false, false, vec![dbool("com.apple.assistant.support", "Assistant Enabled", false)]),
+        toggle("mac-lookup", "privacy", "No Look Up suggestions", "Spotlight and Look Up do not send what you type to Apple.", false, false, vec![dbool("com.apple.lookup.shared", "LookupSuggestionsDisabled", true)]),
+        toggle("mac-extensions", "interface", "Show file extensions", "Shows .pdf, .app and so on after file names.", false, false, vec![dbool(NSG, "AppleShowAllExtensions", true)]),
+        toggle("mac-hidden-files", "interface", "Show hidden files", "Finder shows files whose names start with a dot.", false, false, vec![dbool(FINDER, "AppleShowAllFiles", true)]),
+        toggle("mac-pathbar", "interface", "Show the path bar", "Finder shows the folder path at the bottom of a window.", false, false, vec![dbool(FINDER, "ShowPathbar", true)]),
+        toggle("mac-statusbar", "interface", "Show the status bar", "Finder shows the item count and free space.", false, false, vec![dbool(FINDER, "ShowStatusBar", true)]),
+        toggle("mac-show-recents", "interface", "No recent apps in the Dock", "The Dock does not list recently used apps.", false, false, vec![dbool(DOCK, "show-recents", false)]),
+        toggle("mac-ext-warning", "interface", "No warning when changing an extension", "Finder does not ask when you rename a file extension.", false, false, vec![dbool(FINDER, "FXEnableExtensionChangeWarning", false)]),
+        toggle("mac-key-repeat", "interface", "Faster key repeat", "Held keys repeat sooner and faster.", false, false, vec![dint(NSG, "KeyRepeat", 2), dint(NSG, "InitialKeyRepeat", 15)]),
+        toggle("mac-screenshot-shadow", "interface", "No shadow on window screenshots", "Window screenshots have no drop shadow.", false, false, vec![dbool("com.apple.screencapture", "disable-shadow", true)]),
+    ]
 }
 
 // ---------- pure helpers ----------
@@ -486,8 +552,38 @@ pub const PROFILES: &[ProfileDef] = &[
     },
 ];
 
+pub const MAC_PROFILES: &[ProfileDef] = &[
+    ProfileDef {
+        id: "gaming",
+        name: "Gaming",
+        blurb: "Snappier Mac: no animations, instant Dock, less motion.",
+        items: &[("mac-window-anim", "on"), ("mac-resize-time", "on"), ("mac-dock-speed", "on"), ("mac-launch-anim", "on"), ("mac-expose-anim", "on"), ("mac-minimize-effect", "on"), ("mac-finder-anim", "on"), ("mac-reduce-motion", "on")],
+    },
+    ProfileDef {
+        id: "work",
+        name: "Work",
+        blurb: "Quiet and private: no ads or suggestions, file extensions and path bar shown.",
+        items: &[("mac-personalized-ads", "on"), ("mac-crash-dialog", "on"), ("mac-siri-assistant", "on"), ("mac-lookup", "on"), ("mac-show-recents", "on"), ("mac-extensions", "on"), ("mac-pathbar", "on")],
+    },
+    ProfileDef {
+        id: "balanced",
+        name: "Balanced",
+        blurb: "A light touch: file extensions shown, no .DS_Store on network drives, no crash dialogs.",
+        items: &[("mac-extensions", "on"), ("mac-ds-store", "on"), ("mac-crash-dialog", "on"), ("mac-show-recents", "on")],
+    },
+];
+
 pub fn profile(id: &str) -> Option<&'static ProfileDef> {
-    PROFILES.iter().find(|p| p.id == id)
+    profile_in(false, id)
+}
+
+pub fn profile_in(mac: bool, id: &str) -> Option<&'static ProfileDef> {
+    (if mac { MAC_PROFILES } else { PROFILES }).iter().find(|p| p.id == id)
+}
+
+/// Profiles of the system this app is running on.
+pub fn profiles_here() -> &'static [ProfileDef] {
+    if cfg!(target_os = "macos") { MAC_PROFILES } else { PROFILES }
 }
 
 fn label(tw: &Tweak, v: &str) -> String {
@@ -517,7 +613,11 @@ pub struct PlanItem {
 }
 
 pub fn plan_profile(b: &dyn Backend, profile_id: &str) -> Result<Vec<PlanItem>, String> {
-    let p = profile(profile_id).ok_or("Unknown profile.")?;
+    plan_profile_for(b, profile_id, cfg!(target_os = "macos"))
+}
+
+pub fn plan_profile_for(b: &dyn Backend, profile_id: &str, mac: bool) -> Result<Vec<PlanItem>, String> {
+    let p = profile_in(mac, profile_id).ok_or("Unknown profile.")?;
     let admin = b.is_admin();
     let mut out = Vec::new();
     for (id, target) in p.items {
@@ -539,8 +639,12 @@ pub fn plan_profile(b: &dyn Backend, profile_id: &str) -> Result<Vec<PlanItem>, 
 
 /// Applies the switches of a profile that can be changed. Returns notes for any that failed.
 pub fn apply_profile(b: &dyn Backend, j: &mut Journal, profile_id: &str, now: u64, persist: Persist) -> Result<Vec<String>, String> {
-    let p = profile(profile_id).ok_or("Unknown profile.")?;
-    let plan = plan_profile(b, profile_id)?;
+    apply_profile_for(b, j, profile_id, now, persist, cfg!(target_os = "macos"))
+}
+
+pub fn apply_profile_for(b: &dyn Backend, j: &mut Journal, profile_id: &str, now: u64, persist: Persist, mac: bool) -> Result<Vec<String>, String> {
+    let p = profile_in(mac, profile_id).ok_or("Unknown profile.")?;
+    let plan = plan_profile_for(b, profile_id, mac)?;
     let mut notes = Vec::new();
     for (item, (id, target)) in plan.iter().zip(p.items.iter()) {
         if item.skip.is_some() {
@@ -578,10 +682,16 @@ pub struct TweakView {
     pub options: Vec<Opt>,
     /// Changed by us, so it can be undone.
     pub changed: bool,
+    /// Shows only after the Dock and Finder restart (macOS).
+    pub relaunch: bool,
 }
 
 pub fn views(b: &dyn Backend, j: &Journal) -> Vec<TweakView> {
-    catalog()
+    views_for(b, j, cfg!(target_os = "macos"))
+}
+
+pub fn views_for(b: &dyn Backend, j: &Journal, mac: bool) -> Vec<TweakView> {
+    (if mac { mac_catalog() } else { catalog() })
         .iter()
         .map(|t| TweakView {
             id: t.id.into(),
@@ -594,6 +704,7 @@ pub fn views(b: &dyn Backend, j: &Journal) -> Vec<TweakView> {
             state: state(b, t),
             options: if matches!(t.kind, Kind::Plan) { PLANS.iter().map(|p| Opt { id: p.0.into(), name: p.1.into() }).collect() } else { Vec::new() },
             changed: j.has(t.id),
+            relaunch: RELAUNCH.contains(&t.id),
         })
         .collect()
 }
@@ -653,6 +764,25 @@ impl Backend for Sys {
     }
 }
 
+#[cfg(target_os = "macos")]
+fn sys_read(t: &Target) -> Result<Val, String> {
+    match t {
+        Target::Dns { adapter } => crate::optimize::net::dns_read(adapter),
+        _ => crate::optimize::macsys::read(t),
+    }
+}
+#[cfg(target_os = "macos")]
+fn sys_write(t: &Target, v: &Val) -> Result<(), String> {
+    match t {
+        Target::Dns { adapter } => crate::optimize::net::dns_write(adapter, v),
+        _ => crate::optimize::macsys::write(t, v),
+    }
+}
+#[cfg(target_os = "macos")]
+fn sys_admin() -> bool {
+    false
+}
+
 #[cfg(not(windows))]
 fn sys_interfaces() -> Vec<String> {
     Vec::new()
@@ -662,15 +792,15 @@ fn sys_interfaces() -> Vec<String> {
     win::interfaces()
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "macos")))]
 fn sys_read(_t: &Target) -> Result<Val, String> {
     Err(WIN_ONLY.into())
 }
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "macos")))]
 fn sys_write(_t: &Target, _v: &Val) -> Result<(), String> {
     Err(WIN_ONLY.into())
 }
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "macos")))]
 fn sys_admin() -> bool {
     false
 }
@@ -1167,5 +1297,49 @@ mod tests {
         assert_eq!(j.last_profile.as_ref().map(|p| (p.id.as_str(), p.at)), Some(("gaming", 99)));
         restore_all(&m, &mut j, &mut ok_persist()).unwrap();
         assert_eq!(m.get(&Target::Power), Val::Str(PLANS[0].2.into()));
+    }
+    #[test]
+    fn mac_catalog_is_consistent() {
+        let mut ids: Vec<&str> = mac_catalog().iter().map(|t| t.id).collect();
+        let n = ids.len();
+        ids.sort();
+        ids.dedup();
+        assert_eq!(ids.len(), n);
+        for p in MAC_PROFILES {
+            for (id, _) in p.items {
+                assert!(mac_catalog().iter().any(|t| t.id == *id), "{id}");
+            }
+        }
+        for id in RELAUNCH {
+            assert!(mac_catalog().iter().any(|t| t.id == *id), "{id}");
+        }
+        assert!(profile_in(true, "gaming").is_some() && profile_in(true, "work").is_some() && profile_in(true, "balanced").is_some());
+    }
+
+    #[test]
+    fn mac_defaults_round_trip_deletes_absent_key() {
+        let b = Mock::new(false);
+        let tw = mac_catalog().into_iter().find(|t| t.id == "mac-extensions").unwrap();
+        let t = first_target(&tw, 0);
+        assert_eq!(b.get(&t), Val::Absent);
+        let mut j = Journal::default();
+        assert!(apply(&b, &mut j, &tw, "on", 1, &mut ok_persist()).unwrap());
+        assert_eq!(b.get(&t), Val::Dword(1));
+        undo_tweak(&b, &mut j, &tw, &mut ok_persist()).unwrap();
+        assert_eq!(b.get(&t), Val::Absent);
+    }
+
+    #[test]
+    fn mac_profile_plan_and_apply() {
+        let b = Mock::new(false);
+        let plan = plan_profile_for(&b, "gaming", true).unwrap();
+        assert!(!plan.is_empty());
+        let mut j = Journal::default();
+        apply_profile_for(&b, &mut j, "gaming", 5, &mut ok_persist(), true).unwrap();
+        assert_eq!(j.last_profile.as_ref().map(|p| p.id.as_str()), Some("gaming"));
+        let views = views_for(&b, &j, true);
+        assert!(views.iter().any(|v| v.relaunch && v.changed));
+        restore_all(&b, &mut j, &mut ok_persist()).unwrap();
+        assert!(plan_profile_for(&b, "nope", true).is_err());
     }
 }

@@ -69,6 +69,23 @@ pub fn parse_output(out: &str, now: i64) -> RestoreResult {
     RestoreResult::failed("Windows did not create a restore point. System Protection may be turned off for drive C:.".into())
 }
 
+/// Reads `tmutil localsnapshot` output. Success prints "Created local snapshot with date: ...".
+pub fn parse_tmutil(out: &str, now: i64) -> RestoreResult {
+    if out.contains("Created local snapshot") {
+        return RestoreResult::ok("created", now);
+    }
+    let l = out.to_lowercase();
+    let reason = if l.contains("not permitted") || l.contains("full disk access") || l.contains("privilege") {
+        "macOS did not allow the Time Machine snapshot. Disk Map may need Full Disk Access.".to_string()
+    } else if l.contains("not supported") || l.contains("not apfs") {
+        "This disk does not support local snapshots.".to_string()
+    } else {
+        let t: String = out.trim().chars().take(300).collect();
+        if t.is_empty() { "macOS did not create a Time Machine snapshot.".into() } else { format!("macOS did not create a Time Machine snapshot: {t}") }
+    };
+    RestoreResult::failed(reason)
+}
+
 static CACHE: Mutex<Option<RestoreResult>> = Mutex::new(None);
 
 #[cfg(windows)]
@@ -104,7 +121,24 @@ pub fn ensure() -> RestoreResult {
     r
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
+pub fn ensure() -> RestoreResult {
+    let mut g = CACHE.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(r) = g.as_ref() {
+        return r.clone();
+    }
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
+    let r = match std::process::Command::new("/usr/bin/tmutil").arg("localsnapshot").output() {
+        Ok(o) => parse_tmutil(&format!("{}{}", String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr)), now),
+        Err(e) => RestoreResult::failed(format!("macOS did not create a Time Machine snapshot: {e}")),
+    };
+    if r.status != "failed" {
+        *g = Some(r.clone());
+    }
+    r
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
 pub fn ensure() -> RestoreResult {
     let _ = &CACHE;
     RestoreResult { status: "unsupported".into(), time: None, reason: None }
@@ -155,6 +189,18 @@ mod tests {
     fn unknown_error_is_trimmed_and_kept() {
         let r = parse_output("ERR:  something odd  \n", 5);
         assert!(r.reason.unwrap().contains("something odd"));
+    }
+
+    #[test]
+    fn tmutil_output() {
+        let r = parse_tmutil("Created local snapshot with date: 2026-10-24-120000
+", 77);
+        assert_eq!(r, RestoreResult::ok("created", 77));
+        let f = parse_tmutil("tmutil: Operation not permitted
+", 77);
+        assert_eq!(f.status, "failed");
+        assert!(f.reason.unwrap().contains("Full Disk Access"));
+        assert_eq!(parse_tmutil("", 1).status, "failed");
     }
 
     #[test]

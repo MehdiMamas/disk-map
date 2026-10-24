@@ -9,9 +9,9 @@ interface Overview { cards: Card[]; suggestions: Suggestion[]; startup: StartupI
 interface InstalledApp { id: string; name: string; publisher: string; version: string; size: number | null; updated: string | null; can_uninstall: boolean; tag: string | null }
 interface ProcGroup { name: string; cpu: number; mem: number; count: number }
 interface ProcReport { by_cpu: ProcGroup[]; by_mem: ProcGroup[] }
-interface Tweak { id: string; group: string; name: string; desc: string; admin: boolean; restart: boolean; kind: string; state: string; options: { id: string; name: string }[]; changed: boolean }
+interface Tweak { id: string; group: string; name: string; desc: string; admin: boolean; restart: boolean; kind: string; state: string; options: { id: string; name: string }[]; changed: boolean; relaunch: boolean }
 interface ProfileInfo { id: string; name: string; blurb: string }
-interface TweaksReport { windows: boolean; admin: boolean; tweaks: Tweak[]; profiles: ProfileInfo[]; last_profile: { name: string; at: number } | null; changed_count: number; notes: string[] }
+interface TweaksReport { windows: boolean; mac: boolean; admin: boolean; tweaks: Tweak[]; profiles: ProfileInfo[]; last_profile: { name: string; at: number } | null; changed_count: number; notes: string[] }
 interface PlanItem { id: string; name: string; from: string; to: string; admin: boolean; skip: string | null }
 
 export interface OptimizeHooks {
@@ -43,10 +43,10 @@ let filter = "";
 let msg = "";
 
 interface NetAdapter { name: string; dhcp: boolean; servers: string[]; changed: boolean }
-interface NetReport { windows: boolean; admin: boolean; adapters: NetAdapter[] }
+interface NetReport { windows: boolean; mac: boolean; admin: boolean; adapters: NetAdapter[] }
 interface PingResult { sent: number | null; received: number | null; loss_pct: number | null; min_ms: number | null; max_ms: number | null; avg_ms: number | null; raw: string }
 interface Hardware {
-  windows: boolean; cpu: string; physical_cores: number | null; logical_cores: number; base_mhz: number | null;
+  windows: boolean; mac: boolean; cpu: string; physical_cores: number | null; logical_cores: number; base_mhz: number | null;
   ram_total: number; ram_speed_mhz: number | null; gpus: { name: string; driver: string }[];
   disks: { name: string; kind: string; size: number }[]; volumes: { mount: string; total: number; free: number }[];
   os: string; uptime_secs: number;
@@ -68,10 +68,15 @@ interface RestoreResult { status: string; time: number | null; reason: string | 
 let restoreOk = false; // a restore point exists or the user chose to go on without one (this run)
 let restoring = false;
 let restoreNote = "";
+let loginItems: { items: string[]; note: string } | null = null;
+let loginBusy = false;
+let relaunchNote = "";
 
-/** Makes a Windows restore point before the first change of this run. Returns false if the user cancelled. */
+const sectionLabel = (id: string, label: string) => (id === "windows" && hooks.isMac ? "Interface" : label);
+
+/** Makes a restore point (Windows) or a Time Machine snapshot (Mac) before the first change of this run. Returns false if the user cancelled. */
 async function beforeChange(): Promise<boolean> {
-  if (restoreOk || hooks.isMac) return true;
+  if (restoreOk) return true;
   restoring = true;
   render();
   let r: RestoreResult;
@@ -81,12 +86,14 @@ async function beforeChange(): Promise<boolean> {
   if (r.status === "created" || r.status === "already_recent") {
     restoreOk = true;
     const t = r.time ? when(r.time) : "";
-    restoreNote = r.status === "created" ? `Restore point created ${t}` : `Using restore point from ${t}`;
+    restoreNote = hooks.isMac
+      ? (r.status === "created" ? `Snapshot created ${t}` : `Using snapshot from ${t}`)
+      : (r.status === "created" ? `Restore point created ${t}` : `Using restore point from ${t}`);
     render();
     return true;
   }
   if (r.status === "unsupported") { restoreOk = true; render(); return true; }
-  const go = await askNoRestore(r.reason ?? "Windows did not create a restore point.");
+  const go = await askNoRestore(r.reason ?? (hooks.isMac ? "macOS did not create a Time Machine snapshot." : "Windows did not create a restore point."));
   if (go) restoreOk = true;
   render();
   return go;
@@ -96,9 +103,10 @@ function askNoRestore(reason: string): Promise<boolean> {
   return new Promise((resolve) => {
     const ov = document.createElement("div");
     ov.className = "overlay";
-    ov.innerHTML = `<div class="card"><h2>No restore point</h2><p class="rp-reason"></p>
-      <small>A restore point lets Windows roll the whole computer back. Disk Map also keeps its own Undo for every change.</small>
-      <div class="row"><button class="rp-cancel">Cancel</button><button class="primary rp-go">Continue without restore point</button></div></div>`;
+    const mac = hooks.isMac;
+    ov.innerHTML = `<div class="card"><h2>${mac ? "No snapshot" : "No restore point"}</h2><p class="rp-reason"></p>
+      <small>${mac ? "A Time Machine snapshot keeps a copy of your files from before the change." : "A restore point lets Windows roll the whole computer back."} Disk Map also keeps its own Undo for every change.</small>
+      <div class="row"><button class="rp-cancel">Cancel</button><button class="primary rp-go">${mac ? "Continue without snapshot" : "Continue without restore point"}</button></div></div>`;
     ov.querySelector<HTMLElement>(".rp-reason")!.textContent = reason;
     document.body.appendChild(ov);
     const done = (v: boolean) => { ov.remove(); resolve(v); };
@@ -139,7 +147,7 @@ async function loadAll() {
 }
 
 function refreshing() {
-  overview = null; installed = null; procs = null; tw = null; loaded = false; net = null; hw = null;
+  overview = null; installed = null; procs = null; tw = null; loaded = false; net = null; hw = null; loginItems = null; relaunchNote = "";
   void loadAll();
 }
 
@@ -152,7 +160,7 @@ function winOnly(): string {
 }
 
 function noWindows(): boolean {
-  return hooks.isMac || (tw !== null && !tw.windows);
+  return tw !== null && !tw.windows && !tw.mac;
 }
 
 function overviewHtml(): string {
@@ -181,7 +189,7 @@ function tweakRow(t: Tweak): string {
   const na = t.state === "unavailable";
   const dis = locked || na;
   const tip = locked ? ADMIN_TIP : na ? "Not available on this PC" : "";
-  const badges = `${t.admin ? `<span class="badge">Admin</span>` : ""}${t.restart ? `<span class="badge">Restart needed</span>` : ""}`;
+  const badges = `${t.relaunch ? `<span class="badge">Needs Dock/Finder relaunch</span>` : ""}${t.admin ? `<span class="badge">Admin</span>` : ""}${t.restart ? `<span class="badge">Restart needed</span>` : ""}`;
   let ctl: string;
   if (t.kind === "choice") {
     const opts = t.options.map((o) => `<option value="${esc(o.id)}"${o.id === t.state ? " selected" : ""}>${esc(o.name)}</option>`).join("");
@@ -204,7 +212,31 @@ function startupHtml(): string {
   const o = overview;
   const su = o ? o.startup.map((s, i) => `<li><div class="opt-main"><b>${esc(s.name)}</b>${s.reason ? ` <span class="tag">${esc(s.reason)}</span>` : ""}<br><small>${esc(s.source)}${s.note ? " · " + esc(s.note) : ""}</small></div>
       <button data-su="${i}"${s.can_toggle ? "" : " disabled"}>${s.enabled ? "Turn off" : "Turn on"}</button></li>`).join("") : "";
-  return `<ul class="opt-list">${su || `<li class="opt-none">None found.</li>`}</ul>`;
+  return `<ul class="opt-list">${su || `<li class="opt-none">None found.</li>`}</ul>${loginItemsHtml()}`;
+}
+
+function loginItemsHtml(): string {
+  if (!hooks.isMac) return "";
+  if (!loginItems) {
+    if (!loginBusy) void loadLoginItems();
+    return `<p class="opt-load">Reading Login Items...</p>`;
+  }
+  const li = loginItems;
+  const rows = li.items.map((n) => `<li><div class="opt-main"><b>${esc(n)}</b><br><small>Login Item, change it in System Settings</small></div></li>`).join("");
+  return `<h3>Login Items</h3>${li.note ? `<p class="opt-none">${esc(li.note)}</p>` : ""}<ul class="opt-list">${rows || (li.note ? "" : `<li class="opt-none">None found.</li>`)}</ul>`;
+}
+
+async function loadLoginItems() {
+  loginBusy = true;
+  try { loginItems = { items: await invoke<string[]>("optimize_login_items"), note: "" }; }
+  catch (e) { loginItems = { items: [], note: String(e) }; }
+  loginBusy = false;
+  render();
+}
+
+async function relaunchShell() {
+  try { await invoke("optimize_relaunch_shell"); relaunchNote = "Dock and Finder restarted."; msg = ""; } catch (e) { msg = String(e); }
+  render();
 }
 
 function appsHtml(): string {
@@ -230,13 +262,12 @@ function currentProvider(a: NetAdapter): string {
 }
 
 function networkHtml(): string {
-  if (hooks.isMac) return winOnly();
   if (!net) {
     if (!netBusy) void loadNet();
     return `<p class="opt-load">Reading network adapters...</p>`;
   }
-  if (!net.windows) return winOnly();
-  const tip = net.admin ? "" : ADMIN_TIP;
+  if (!net.windows && !net.mac) return winOnly();
+  const tip = net.windows && !net.admin ? ADMIN_TIP : "";
   const dis = tip ? ` disabled title="${esc(tip)}"` : "";
   const rows = net.adapters.map((a, i) => {
     const cur = currentProvider(a);
@@ -255,13 +286,13 @@ function networkHtml(): string {
   }
   return `<ul class="opt-list">${rows}</ul>
     <p class="opt-none">Switching DNS changes where this PC looks up website names. Every change can be undone.</p>
-    <div class="opt-bar"><button id="opt-flush">Flush DNS cache</button>${flushNote ? `<span class="tag">${esc(flushNote)}</span>` : ""}</div>
+    <div class="opt-bar"><button id="opt-flush"${net.mac ? " disabled" : ""}>Flush DNS cache</button>${net.mac ? `<small>Needs admin: run <code>sudo dscacheutil -flushcache; sudo killall -HUP mDNSResponder</code> in Terminal</small>` : ""}${flushNote ? `<span class="tag">${esc(flushNote)}</span>` : ""}</div>
     <div class="opt-bar"><input id="opt-host" placeholder="Host to ping, e.g. 1.1.1.1" value="${esc(host)}" spellcheck="false"><button id="opt-ping"${pinging ? " disabled" : ""}>${pinging ? "Pinging..." : "Ping"}</button></div>${pr}`;
 }
 
 async function loadNet() {
   netBusy = true;
-  try { net = await invoke<NetReport>("optimize_net"); } catch (e) { msg = String(e); net = { windows: false, admin: false, adapters: [] }; }
+  try { net = await invoke<NetReport>("optimize_net"); } catch (e) { msg = String(e); net = { windows: false, mac: false, admin: false, adapters: [] }; }
   netBusy = false;
   render();
 }
@@ -311,7 +342,7 @@ function hardwareHtml(): string {
   const cores = `${h.physical_cores ?? "?"} physical, ${h.logical_cores} logical`;
   const clock = h.base_mhz ? `, ${(h.base_mhz / 1000).toFixed(2)} GHz` : "";
   const ram = hooks.fmt(h.ram_total) + (h.ram_speed_mhz ? `, ${h.ram_speed_mhz} MHz` : "");
-  const gpus = h.gpus.length ? h.gpus.map((g) => row("Graphics", g.name + (g.driver ? ` (driver ${g.driver})` : ""))).join("") : (h.windows ? row("Graphics", "Not found") : "");
+  const gpus = h.gpus.length ? h.gpus.map((g) => row("Graphics", g.name + (g.driver ? ` (driver ${g.driver})` : ""))).join("") : (h.windows || h.mac ? row("Graphics", "Not found") : "");
   const disks = h.disks.map((d) => row("Drive", `${d.name}, ${d.kind}, ${hooks.fmt(d.size)}`)).join("");
   const vols = h.volumes.map((v) => row("Volume " + v.mount, `${hooks.fmt(v.free)} free of ${hooks.fmt(v.total)}`)).join("");
   return `<ul class="opt-list">${row("Processor", h.cpu || "Unknown")}${row("Cores", cores + clock)}${row("Memory", ram)}${gpus}${disks}${vols}${row("System", h.os)}${row("Uptime", span(h.uptime_secs))}</ul>`;
@@ -326,26 +357,30 @@ async function loadHw() {
 
 function render() {
   if (loading && !overview) { root.innerHTML = `<p class="opt-load">Checking your computer…</p>`; return; }
-  const nav = SECTIONS.map(([id, label]) => `<button data-sec="${id}"${id === section ? ' class="on"' : ""}>${label}</button>`).join("");
+  const nav = SECTIONS.map(([id, label]) => `<button data-sec="${id}"${id === section ? ' class="on"' : ""}>${sectionLabel(id, label)}</button>`).join("");
   const notes = tw && tw.notes.length ? `<p class="err">${tw.notes.map(esc).join("<br>")}</p>` : "";
   let body: string;
   if (section === "overview") body = overviewHtml();
   else if (section === "profiles") body = profilesHtml();
   else if (section === "performance") body = tweaksHtml("performance");
   else if (section === "privacy") body = tweaksHtml("privacy");
-  else if (section === "windows") body = tweaksHtml("windows");
+  else if (section === "windows") body = tweaksHtml(hooks.isMac ? "interface" : "windows");
   else if (section === "startup") body = startupHtml();
   else if (section === "apps") body = appsHtml();
   else if (section === "network") body = networkHtml();
   else if (section === "hardware") body = hardwareHtml();
   else body = processesHtml();
-  const title = SECTIONS.find((x) => x[0] === section)![1];
+  const secDef = SECTIONS.find((x) => x[0] === section)!;
+  const title = sectionLabel(secDef[0], secDef[1]);
+  const needRelaunch = !!tw && tw.mac && tw.tweaks.some((t) => t.relaunch && t.changed);
+  const relaunchBtn = needRelaunch ? `<button id="opt-relaunch">Relaunch Dock and Finder to apply</button>` : "";
   root.innerHTML = `<div class="opt-wrap"><nav class="opt-nav">${nav}</nav><div class="opt-body">
-    <div class="opt-bar"><h3>${title}</h3><button id="opt-refresh"${loading ? " disabled" : ""}>${loading ? "Refreshing…" : "Refresh"}</button>${restoring ? `<span class="opt-restoring">Creating a restore point…</span>` : ""}${msg ? `<span class="err">${esc(msg)}</span>` : ""}</div>${restoreNote ? `<p class="opt-restorenote">${esc(restoreNote)}</p>` : ""}${notes}${body}</div></div>`;
+    <div class="opt-bar"><h3>${title}</h3><button id="opt-refresh"${loading ? " disabled" : ""}>${loading ? "Refreshing…" : "Refresh"}</button>${relaunchBtn}${relaunchNote ? `<span class="tag">${esc(relaunchNote)}</span>` : ""}${restoring ? `<span class="opt-restoring">${hooks.isMac ? "Creating a Time Machine snapshot…" : "Creating a restore point…"}</span>` : ""}${msg ? `<span class="err">${esc(msg)}</span>` : ""}</div>${restoreNote ? `<p class="opt-restorenote">${esc(restoreNote)}</p>` : ""}${notes}${body}</div></div>`;
   wire();
 }
 
 async function setTweak(id: string, target: string) {
+  relaunchNote = "";
   if (!(await beforeChange())) { render(); return; }
   try { tw = await invoke<TweaksReport>("optimize_set_tweak", { id, target }); msg = ""; }
   catch (e) {
@@ -424,6 +459,7 @@ function wire() {
   root.querySelector<HTMLElement>("#opt-refresh")?.addEventListener("click", refreshing);
   root.querySelectorAll<HTMLElement>("button[data-sec]").forEach((b) => b.addEventListener("click", () => { section = b.dataset.sec!; render(); }));
   root.querySelectorAll<HTMLElement>("button[data-prof]").forEach((b) => b.addEventListener("click", () => void openProfile(b.dataset.prof!)));
+  root.querySelector<HTMLElement>("#opt-relaunch")?.addEventListener("click", () => void relaunchShell());
   root.querySelector<HTMLElement>("#opt-restore")?.addEventListener("click", () => void restoreAll());
   root.querySelectorAll<HTMLElement>("button[data-undo]").forEach((b) => b.addEventListener("click", () => void undoTweak(b.dataset.undo!)));
   root.querySelectorAll<HTMLInputElement>("input[data-tw]").forEach((i) => i.addEventListener("change", () => void setTweak(i.dataset.tw!, i.checked ? "on" : "off")));

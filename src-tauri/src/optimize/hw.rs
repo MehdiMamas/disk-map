@@ -27,6 +27,7 @@ pub struct Volume {
 #[derive(Serialize)]
 pub struct Hardware {
     pub windows: bool,
+    pub mac: bool,
     pub cpu: String,
     pub physical_cores: Option<u32>,
     pub logical_cores: u32,
@@ -99,6 +100,49 @@ pub fn windows_name(product: &str, display: &str, build: &str) -> String {
     out
 }
 
+/// `sw_vers` output to "macOS 14.5 (23F79)".
+pub fn parse_sw_vers(out: &str) -> String {
+    let mut name = String::new();
+    let mut ver = String::new();
+    let mut build = String::new();
+    for l in out.lines() {
+        if let Some((k, v)) = l.split_once(':') {
+            match k.trim() {
+                "ProductName" => name = v.trim().to_string(),
+                "ProductVersion" => ver = v.trim().to_string(),
+                "BuildVersion" => build = v.trim().to_string(),
+                _ => {}
+            }
+        }
+    }
+    if name.is_empty() {
+        name = "macOS".into();
+    }
+    let mut o = name;
+    if !ver.is_empty() {
+        o.push(' ');
+        o.push_str(&ver);
+    }
+    if !build.is_empty() {
+        o.push_str(&format!(" ({build})"));
+    }
+    o
+}
+
+/// GPU names from `system_profiler SPDisplaysDataType -json`.
+pub fn parse_mac_gpus(json: &str) -> Vec<Gpu> {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(json) else { return Vec::new() };
+    v.get("SPDisplaysDataType")
+        .and_then(|a| a.as_array())
+        .map(|a| a.iter().map(|g| Gpu { name: text(g, "sppci_model"), driver: String::new() }).filter(|g| !g.name.is_empty()).collect())
+        .unwrap_or_default()
+}
+
+#[cfg(target_os = "macos")]
+fn mac_cmd(prog: &str, args: &[&str]) -> String {
+    std::process::Command::new(prog).args(args).output().map(|o| String::from_utf8_lossy(&o.stdout).to_string()).unwrap_or_default()
+}
+
 #[cfg(windows)]
 fn os_string() -> String {
     use winreg::enums::{HKEY_LOCAL_MACHINE, KEY_READ};
@@ -111,7 +155,12 @@ fn os_string() -> String {
         Err(_) => "Windows".into(),
     }
 }
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
+fn os_string() -> String {
+    let t = mac_cmd("/usr/bin/sw_vers", &[]);
+    if t.trim().is_empty() { "macOS".into() } else { parse_sw_vers(&t) }
+}
+#[cfg(not(any(windows, target_os = "macos")))]
 fn os_string() -> String {
     sysinfo::System::long_os_version().unwrap_or_else(|| "macOS".into())
 }
@@ -158,6 +207,18 @@ pub fn read() -> Hardware {
         }
     }
 
+    #[cfg(target_os = "macos")]
+    {
+        let brand = mac_cmd("/usr/sbin/sysctl", &["-n", "machdep.cpu.brand_string"]);
+        if !brand.trim().is_empty() {
+            cpu = brand.trim().to_string();
+        }
+        if let Ok(n) = mac_cmd("/usr/sbin/sysctl", &["-n", "hw.physicalcpu"]).trim().parse::<u32>() {
+            physical = Some(n);
+        }
+        gpus = parse_mac_gpus(&mac_cmd("/usr/sbin/system_profiler", &["SPDisplaysDataType", "-json"]));
+    }
+
     let volumes = sysinfo::Disks::new_with_refreshed_list()
         .iter()
         .filter(|d| d.total_space() > 0)
@@ -166,6 +227,7 @@ pub fn read() -> Hardware {
 
     Hardware {
         windows: cfg!(windows),
+        mac: cfg!(target_os = "macos"),
         cpu,
         physical_cores: physical,
         logical_cores: cpus.len() as u32,
@@ -209,6 +271,19 @@ mod tests {
         assert_eq!(parse_ram_speed(r#"{"Speed":3200}"#).unwrap(), Some(3200));
         assert_eq!(parse_ram_speed(r#"[{"Speed":2666},{"Speed":3200}]"#).unwrap(), Some(3200));
         assert_eq!(parse_ram_speed("").unwrap(), None);
+    }
+
+    #[test]
+    fn mac_facts() {
+        let sw = "ProductName:		macOS
+ProductVersion:		14.5
+BuildVersion:		23F79
+";
+        assert_eq!(parse_sw_vers(sw), "macOS 14.5 (23F79)");
+        assert_eq!(parse_sw_vers(""), "macOS");
+        let j = r#"{"SPDisplaysDataType":[{"sppci_model":"Apple M2 Pro","_name":"x"},{"_name":"none"}]}"#;
+        assert_eq!(parse_mac_gpus(j), vec![Gpu { name: "Apple M2 Pro".into(), driver: String::new() }]);
+        assert!(parse_mac_gpus("junk").is_empty());
     }
 
     #[test]

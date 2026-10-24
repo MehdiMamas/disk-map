@@ -13,6 +13,7 @@ pub mod health;
 pub mod hw;
 pub mod installed;
 pub mod journal;
+pub mod macsys;
 pub mod net;
 pub mod procs;
 pub mod restore;
@@ -150,6 +151,7 @@ pub struct LastProfileInfo {
 #[derive(Serialize)]
 pub struct TweaksReport {
     pub windows: bool,
+    pub mac: bool,
     pub admin: bool,
     pub tweaks: Vec<tweaks::TweakView>,
     pub profiles: Vec<ProfileInfo>,
@@ -174,9 +176,10 @@ fn report(j: &journal::Journal, notes: Vec<String>) -> TweaksReport {
     ids.dedup();
     TweaksReport {
         windows: cfg!(windows),
+        mac: cfg!(target_os = "macos"),
         admin: tweaks::Backend::is_admin(&sys),
-        tweaks: if cfg!(windows) { tweaks::views(&sys, j) } else { Vec::new() },
-        profiles: tweaks::PROFILES.iter().map(|p| ProfileInfo { id: p.id.into(), name: p.name.into(), blurb: p.blurb.into() }).collect(),
+        tweaks: if cfg!(any(windows, target_os = "macos")) { tweaks::views(&sys, j) } else { Vec::new() },
+        profiles: tweaks::profiles_here().iter().map(|p| ProfileInfo { id: p.id.into(), name: p.name.into(), blurb: p.blurb.into() }).collect(),
         last_profile: j.last_profile.as_ref().map(|l| LastProfileInfo { name: l.name.clone(), at: l.at }),
         changed_count: ids.len(),
         notes,
@@ -348,6 +351,7 @@ pub struct NetAdapterView {
 #[derive(Serialize)]
 pub struct NetReport {
     pub windows: bool,
+    pub mac: bool,
     pub admin: bool,
     pub adapters: Vec<NetAdapterView>,
 }
@@ -366,7 +370,7 @@ fn net_report(app: &tauri::AppHandle) -> Result<NetReport, String> {
             NetAdapterView { name: a.name, dhcp: a.dhcp, servers: a.servers, changed }
         })
         .collect();
-    Ok(NetReport { windows: cfg!(windows), admin: tweaks::Backend::is_admin(&tweaks::Sys), adapters })
+    Ok(NetReport { windows: cfg!(windows), mac: cfg!(target_os = "macos"), admin: tweaks::Backend::is_admin(&tweaks::Sys), adapters })
 }
 
 #[tauri::command]
@@ -378,7 +382,7 @@ pub async fn optimize_net(app: tauri::AppHandle) -> Result<NetReport, String> {
 #[tauri::command]
 pub async fn optimize_set_dns(app: tauri::AppHandle, adapter: String, provider: String) -> Result<NetReport, String> {
     blocking(move || {
-        if !tweaks::Backend::is_admin(&tweaks::Sys) {
+        if cfg!(windows) && !tweaks::Backend::is_admin(&tweaks::Sys) {
             return Err(tweaks::ADMIN_MSG.to_string());
         }
         let want = net::provider_val(&provider)?;
@@ -409,7 +413,7 @@ pub async fn optimize_set_dns(app: tauri::AppHandle, adapter: String, provider: 
 #[tauri::command]
 pub async fn optimize_undo_dns(app: tauri::AppHandle, adapter: String) -> Result<NetReport, String> {
     blocking(move || {
-        if !tweaks::Backend::is_admin(&tweaks::Sys) {
+        if cfg!(windows) && !tweaks::Backend::is_admin(&tweaks::Sys) {
             return Err(tweaks::ADMIN_MSG.to_string());
         }
         session(&app, |j, save| {
@@ -442,7 +446,32 @@ pub async fn optimize_hardware() -> Result<hw::Hardware, String> {
     blocking(hw::read).await
 }
 
-/// Makes a Windows restore point once per run, before the first change. Slow (10-30 s).
+/// Login Items (macOS, read-only). Err carries a note to show instead of the list.
+#[tauri::command]
+pub async fn optimize_login_items() -> Result<Vec<String>, String> {
+    blocking(startup::login_items).await
+}
+
+/// Restarts the Dock and Finder so Dock and Finder settings show. Only runs when the user clicks.
+#[tauri::command]
+pub async fn optimize_relaunch_shell() -> Result<(), String> {
+    blocking(|| {
+        #[cfg(target_os = "macos")]
+        {
+            for app in ["Dock", "Finder"] {
+                let _ = std::process::Command::new("/usr/bin/killall").arg(app).output();
+            }
+            Ok(())
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            Err("Only needed on macOS.".to_string())
+        }
+    })
+    .await
+}
+
+/// Makes a restore point (Windows) or a Time Machine snapshot (macOS) once per run, before the first change. Slow (10-30 s).
 #[tauri::command]
 pub async fn ensure_restore_point() -> Result<restore::RestoreResult, String> {
     blocking(restore::ensure).await
