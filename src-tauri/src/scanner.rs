@@ -89,10 +89,24 @@ struct Dir {
     small_count: u64,
 }
 
+/// On macOS the Data volume is mounted at /System/Volumes/Data and its folders
+/// (/Users, /Applications, /private, ...) are firmlinked into /, on the same
+/// device and inode. Scanning above it would count every file twice, so the
+/// mount itself is skipped and its content is counted at the firmlinked paths.
+fn firmlink_targets(root: &Path) -> Vec<PathBuf> {
+    let data = Path::new("/System/Volumes/Data");
+    if cfg!(target_os = "macos") && data.starts_with(root) && data != root {
+        vec![data.to_path_buf()]
+    } else {
+        Vec::new()
+    }
+}
+
 pub fn scan_dir(root: &Path, opts: &Options, mut progress: impl FnMut(Progress)) -> ScanOutput {
     let root_dev = std::fs::symlink_metadata(root).map(|m| meta_of(&m).dev).unwrap_or(0);
     let skipped = Arc::new(AtomicU64::new(0));
     let skipped2 = skipped.clone();
+    let skip_paths = firmlink_targets(root);
     let walker = WalkDirGeneric::<((), Meta)>::new(root)
         .skip_hidden(false)
         .follow_links(false)
@@ -107,6 +121,7 @@ pub fn scan_dir(root: &Path, opts: &Options, mut progress: impl FnMut(Progress))
                     skipped2.fetch_add(1, Ordering::Relaxed);
                     false
                 }
+                Ok(e) if e.file_type().is_dir() && skip_paths.iter().any(|p| e.path() == *p) => false,
                 _ => true,
             });
         });
@@ -315,6 +330,17 @@ pub fn remove(root: &mut Node, root_path: &Path, target: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn firmlink_target_skipped_only_above_it() {
+        let data = PathBuf::from("/System/Volumes/Data");
+        if cfg!(target_os = "macos") {
+            assert_eq!(firmlink_targets(Path::new("/")), vec![data.clone()]);
+            assert_eq!(firmlink_targets(Path::new("/System")), vec![data.clone()]);
+        }
+        assert!(firmlink_targets(&data).is_empty());
+        assert!(firmlink_targets(Path::new("/Users")).is_empty());
+    }
     use std::fs;
 
     fn write(p: &Path, n: usize) {

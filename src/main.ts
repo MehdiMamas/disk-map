@@ -58,7 +58,12 @@ async function startScan() {
       r.other_fs_skipped ? `${r.other_fs_skipped} other drives skipped` : "",
     ].filter(Boolean).join(", ");
     $("status").textContent = `${fmt(r.root.size)} in ${r.root.files.toLocaleString()} files, ${(r.elapsed_ms / 1000).toFixed(1)} s${extra ? " · " + extra : ""}`;
-    if (r.permission_denied > 0 && isMac) {
+    const fda = isMac && r.permission_denied > 0 ? await invoke<string>("full_disk_access").catch(() => "unknown") : "";
+    if (fda === "granted") {
+      const h = $("hint");
+      h.hidden = false;
+      h.textContent = `${r.permission_denied} system-protected folders were skipped. macOS keeps these locked even with Full Disk Access; this is normal.`;
+    } else if (r.permission_denied > 0 && isMac) {
       const h = $("hint");
       h.hidden = false;
       h.textContent = `Some folders were blocked by macOS (${r.denied_examples[0] ?? ""}). Grant access: System Settings → Privacy & Security → Full Disk Access → enable Disk Map, then scan again. `;
