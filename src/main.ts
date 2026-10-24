@@ -21,9 +21,11 @@ app.innerHTML = `
   <input id="path" spellcheck="false" />
   <button id="pick">Choose…</button>
   <button id="scan" class="primary">Scan</button>
+  <button id="upd" class="link">Check for updates</button>
 </header>
 <div id="status"></div>
 <div id="hint" hidden></div>
+<div id="update" hidden></div>
 <nav id="crumbs"><button id="back" disabled>← Back</button><span id="trail"></span></nav>
 <main><div id="map"></div><ul id="list"></ul></main>`;
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -218,3 +220,44 @@ async function fdaOnboarding() {
   unlisten = await getCurrentWindow().onFocusChanged(({ payload }) => { if (payload) check(true); });
 }
 fdaOnboarding().catch(() => {});
+
+interface UpdateInfo { current: string; latest: string; newer: boolean; url: string }
+const DISMISS_KEY = "dismissedUpdate";
+
+function showUpdateBanner(text: string, info?: UpdateInfo) {
+  const el = $("update");
+  el.hidden = false;
+  el.textContent = text + " ";
+  if (info?.newer) {
+    const d = document.createElement("button");
+    d.textContent = "Download";
+    d.onclick = () => invoke("open_url", { url: info.url }).catch((e) => showUpdateBanner(`Couldn't open the download: ${e}`));
+    el.appendChild(d);
+  }
+  const x = document.createElement("button");
+  x.textContent = "×";
+  x.title = "Dismiss";
+  x.onclick = () => {
+    el.hidden = true;
+    if (info?.newer) { try { localStorage.setItem(DISMISS_KEY, info.latest); } catch { /* ignore */ } }
+  };
+  el.appendChild(x);
+}
+
+async function checkForUpdate(manual: boolean) {
+  try {
+    const info = await invoke<UpdateInfo>("check_update");
+    if (info.newer) {
+      let dismissed: string | null = null;
+      try { dismissed = localStorage.getItem(DISMISS_KEY); } catch { /* ignore */ }
+      if (!manual && dismissed === info.latest) return;
+      showUpdateBanner(`Disk Map ${info.latest} is available (you have ${info.current}).`, info);
+    } else if (manual) {
+      showUpdateBanner(`You're up to date (${info.current}).`);
+    }
+  } catch (e) {
+    if (manual) showUpdateBanner(`Couldn't check for updates: ${e}`);
+  }
+}
+$("upd").onclick = () => checkForUpdate(true);
+setTimeout(() => checkForUpdate(false), 3000);

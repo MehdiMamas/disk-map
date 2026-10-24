@@ -45,3 +45,6 @@ li:hover .acts { display:flex; }
 #fda-skip { display:inline-block; margin-bottom:6px; }
 #fda small { display:block; color:#666; }
 @media (prefers-color-scheme: dark) { #fda .card { background:#2a2a2e; color:#eee; } #fda small { color:#aaa; } }
+#update { margin:0 10px 6px; padding:8px 10px; background:#dff0ff; color:#0b3a66; border-radius:6px; }
+#update button { margin-left:6px; }
+button.link { background:none; border:none; color:var(--mut); text-decoration:underline; cursor:pointer; margin-left:auto; }

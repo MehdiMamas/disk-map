@@ -1,6 +1,7 @@
 pub mod hogs;
 pub mod permissions;
 pub mod scanner;
+pub mod update;
 
 use scanner::{Node, ViewNode, PRUNE_FRACTION};
 use serde::Serialize;
@@ -118,11 +119,27 @@ fn relaunch(app: tauri::AppHandle) {
     app.restart();
 }
 
+#[tauri::command]
+async fn check_update(app: tauri::AppHandle) -> Result<update::UpdateInfo, String> {
+    let current = app.package_info().version.to_string();
+    tauri::async_runtime::spawn_blocking(move || {
+        let rel = update::fetch_latest()?;
+        Ok(update::build_info(&current, &rel, std::env::consts::OS))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+fn open_url(url: String) -> Result<(), String> {
+    update::open(&url)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
-        .invoke_handler(tauri::generate_handler![home_dir, scan, view, reveal, move_to_trash, full_disk_access, open_privacy_settings, relaunch])
+        .invoke_handler(tauri::generate_handler![home_dir, scan, view, reveal, move_to_trash, full_disk_access, open_privacy_settings, relaunch, check_update, open_url])
         .run(tauri::generate_context!())
         .expect("error while running Disk Map");
 }
