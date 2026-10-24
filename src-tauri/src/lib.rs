@@ -1,3 +1,4 @@
+pub mod apps;
 pub mod hogs;
 pub mod permissions;
 pub mod scanner;
@@ -76,9 +77,8 @@ fn reveal(path: String) -> Result<(), String> {
     r.map(|_| ()).map_err(|e| e.to_string())
 }
 
-/// Moves to the system Trash (never a permanent delete) and updates the in-memory tree.
-#[tauri::command]
-fn move_to_trash(path: String) -> Result<(), String> {
+/// Moves one path to the system Trash (never a permanent delete).
+fn trash_path(path: &str) -> Result<(), String> {
     #[allow(unused_mut)]
     let mut ctx = trash::TrashContext::default();
     // NSFileManager avoids driving Finder via AppleScript (no Automation prompt).
@@ -87,11 +87,58 @@ fn move_to_trash(path: String) -> Result<(), String> {
         use trash::macos::{DeleteMethod, TrashContextExtMacos};
         ctx.set_delete_method(DeleteMethod::NsFileManager);
     }
-    ctx.delete(&path).map_err(|e| e.to_string())?;
+    ctx.delete(path).map_err(|e| e.to_string())?;
     if let Some((root, tree)) = SCAN_STORE.lock().unwrap().as_mut() {
-        scanner::remove(tree, root, Path::new(&path));
+        scanner::remove(tree, root, Path::new(path));
     }
     Ok(())
+}
+
+/// Moves to the system Trash (never a permanent delete) and updates the in-memory tree.
+#[tauri::command]
+fn move_to_trash(path: String) -> Result<(), String> {
+    trash_path(&path)
+}
+
+const NOT_MAC: &str = "not supported yet";
+
+#[tauri::command]
+async fn list_apps() -> Result<Vec<apps::AppEntry>, String> {
+    if !cfg!(target_os = "macos") {
+        return Err(NOT_MAC.into());
+    }
+    tauri::async_runtime::spawn_blocking(|| {
+        let home = dirs::home_dir().ok_or("no home folder")?;
+        Ok(apps::list_apps(&home))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn app_uninstall_plan(path: String) -> Result<apps::UninstallPlan, String> {
+    if !cfg!(target_os = "macos") {
+        return Err(NOT_MAC.into());
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        let home = dirs::home_dir().ok_or("no home folder")?;
+        apps::plan(Path::new(&path), &home).map(|(_, p)| p)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn uninstall_app(path: String, items: Vec<String>) -> Result<Vec<apps::ItemResult>, String> {
+    if !cfg!(target_os = "macos") {
+        return Err(NOT_MAC.into());
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        let home = dirs::home_dir().ok_or("no home folder")?;
+        apps::uninstall(Path::new(&path), &home, &items, trash_path)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// "granted" | "denied" | "unknown" (always "granted" off macOS).
@@ -139,7 +186,7 @@ fn open_url(url: String) -> Result<(), String> {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
-        .invoke_handler(tauri::generate_handler![home_dir, scan, view, reveal, move_to_trash, full_disk_access, open_privacy_settings, relaunch, check_update, open_url])
+        .invoke_handler(tauri::generate_handler![home_dir, scan, view, reveal, move_to_trash, full_disk_access, open_privacy_settings, relaunch, check_update, open_url, list_apps, app_uninstall_plan, uninstall_app])
         .run(tauri::generate_context!())
         .expect("error while running Disk Map");
 }
