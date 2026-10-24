@@ -271,14 +271,42 @@ fn move_to_trash(app: tauri::AppHandle, path: String) -> Result<(), String> {
 
 const NOT_MAC: &str = "not supported yet";
 
+/// The Apps list plus where its sizes came from: `from_scan` is the saved scan (root, time) when it answered any size.
+#[derive(Serialize)]
+struct AppsList {
+    apps: Vec<apps::AppEntry>,
+    from_scan: Option<(String, u64)>,
+}
+
+/// Size of `p` from the tree if it is there, else None (outside the root, or folded into "other").
+fn scan_size(saved: &Saved, p: &Path) -> Option<u64> {
+    scanner::find(&saved.tree, &saved.root, p).map(|n| n.size)
+}
+
 #[tauri::command]
-async fn list_apps() -> Result<Vec<apps::AppEntry>, String> {
+async fn list_apps(fresh: bool) -> Result<AppsList, String> {
     if !cfg!(target_os = "macos") {
         return Err(NOT_MAC.into());
     }
-    tauri::async_runtime::spawn_blocking(|| {
+    tauri::async_runtime::spawn_blocking(move || {
         let home = dirs::home_dir().ok_or("no home folder")?;
-        Ok(apps::list_apps(&home))
+        let used = std::sync::atomic::AtomicBool::new(false);
+        let size = |p: &Path| -> u64 {
+            if !fresh {
+                if let Some(s) = SCAN_STORE.lock().unwrap().as_ref().and_then(|s| scan_size(s, p)) {
+                    used.store(true, std::sync::atomic::Ordering::Relaxed);
+                    return s;
+                }
+            }
+            apps::path_size(p)
+        };
+        let apps = apps::list_apps(&home, &size);
+        let from_scan = if used.load(std::sync::atomic::Ordering::Relaxed) {
+            SCAN_STORE.lock().unwrap().as_ref().map(|s| (s.root.to_string_lossy().into_owned(), s.scanned_at))
+        } else {
+            None
+        };
+        Ok(AppsList { apps, from_scan })
     })
     .await
     .map_err(|e| e.to_string())?
@@ -365,6 +393,19 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn scan_size_uses_tree_and_falls_back_outside() {
+        let leaf = |n: &str, size| Node { name: n.into(), size, is_dir: false, files: 1, children: vec![] };
+        let dir = |n: &str, size, c| Node { name: n.into(), size, is_dir: true, files: 1, children: c };
+        let tree = dir("", 300, vec![dir("Applications", 300, vec![dir("Fake.app", 300, vec![leaf("bin", 300)])])]);
+        let saved = Saved { root: PathBuf::from("/nonexistent-root"), tree, ..Default::default() };
+        // Not on disk at all, yet answered from the tree.
+        assert_eq!(scan_size(&saved, Path::new("/nonexistent-root/Applications/Fake.app")), Some(300));
+        // Missing node (folded into "other") and a path outside the root both give None, so the caller measures.
+        assert_eq!(scan_size(&saved, Path::new("/nonexistent-root/Applications/Small.plist")), None);
+        assert_eq!(scan_size(&saved, Path::new("/elsewhere/Fake.app")), None);
+    }
+
     use super::*;
 
     #[test]

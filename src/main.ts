@@ -446,24 +446,25 @@ async function openUninstall(appPath: string) {
 // Measuring every app is slow, so the list is kept and reused until the user asks for a fresh one.
 let appsCache: AppEntry[] | null = null;
 let appsAt = 0;
+let appsFrom: [string, number] | null = null;
 function saveApps() {
-  if (appsCache) lsSet("appsCache", JSON.stringify({ at: appsAt, apps: appsCache }));
+  if (appsCache) lsSet("appsCache", JSON.stringify({ at: appsAt, apps: appsCache, from: appsFrom }));
 }
 try {
   const raw = lsGet("appsCache");
   const o = raw ? JSON.parse(raw) : null;
-  if (o && Array.isArray(o.apps) && typeof o.at === "number") { appsCache = o.apps; appsAt = o.at; }
+  if (o && Array.isArray(o.apps) && typeof o.at === "number") { appsCache = o.apps; appsAt = o.at; appsFrom = Array.isArray(o.from) ? o.from : null; }
 } catch { try { localStorage.removeItem("appsCache"); } catch { /* ignore */ } }
 
 function renderApps(ov: HTMLElement) {
   const card = ov.querySelector(".card")!;
   const apps = appsCache ?? [];
-  card.innerHTML = `<h2>Installed apps</h2><small>Sorted by app size plus its leftover data. Measured ${appsAt ? ago(appsAt) : "just now"}.</small>
+  card.innerHTML = `<h2>Installed apps</h2><small>Sorted by app size plus its leftover data. Measured ${appsAt ? ago(appsAt) : "just now"}.${appsFrom ? ` Sizes from your scan of ${esc(appsFrom[0])} (${ago(appsFrom[1])}).` : ""}</small>
     <ul class="un-list apps">${apps.map((a, i) => `<li><span class="un-main"><b>${esc(a.name)}</b><br><small>App ${fmt(a.app_size)} · data ${fmt(a.data_size)}</small></span>
       <span class="sz">${fmt(a.app_size + a.data_size)}</span><button data-i="${i}" class="danger">Uninstall…</button></li>`).join("")}</ul>
     <div class="row"><button id="apps-refresh">Scan again</button><button id="un-close">Close</button></div>`;
   card.querySelector<HTMLElement>("#un-close")!.onclick = () => ov.remove();
-  card.querySelector<HTMLElement>("#apps-refresh")!.onclick = () => { appsCache = null; try { localStorage.removeItem("appsCache"); } catch { /* ignore */ } void openApps(); };
+  card.querySelector<HTMLElement>("#apps-refresh")!.onclick = () => { appsCache = null; try { localStorage.removeItem("appsCache"); } catch { /* ignore */ } void openApps(true); };
   card.querySelectorAll<HTMLElement>("button[data-i]").forEach((b) => b.onclick = () => openUninstall(apps[Number(b.dataset.i)].path));
 }
 
@@ -474,11 +475,13 @@ function forgetApp(path: string) {
   if (ov) renderApps(ov);
 }
 
-async function openApps() {
+async function openApps(fresh = false) {
   if (appsCache) { renderApps(overlay("appsPanel", "")); return; }
   const ov = overlay("appsPanel", `<h2>Installed apps</h2><p>Measuring apps and their data… this can take a few seconds.</p>`);
   try {
-    appsCache = await invoke<AppEntry[]>("list_apps");
+    const r = await invoke<{ apps: AppEntry[]; from_scan: [string, number] | null }>("list_apps", { fresh });
+    appsCache = r.apps;
+    appsFrom = r.from_scan;
     appsAt = Math.floor(Date.now() / 1000);
     saveApps();
     if (ov.isConnected) renderApps(ov);
@@ -488,4 +491,4 @@ async function openApps() {
     card.querySelector<HTMLElement>("#un-close")!.onclick = () => ov.remove();
   }
 }
-if (isMac) { $("apps").hidden = false; $("apps").addEventListener("click", openApps); }
+if (isMac) { $("apps").hidden = false; $("apps").addEventListener("click", () => void openApps()); }
