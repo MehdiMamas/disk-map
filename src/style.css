@@ -48,3 +48,19 @@ li:hover .acts { display:flex; }
 #update { margin:0 10px 6px; padding:8px 10px; background:#dff0ff; color:#0b3a66; border-radius:6px; }
 #update button { margin-left:6px; }
 button.link { background:none; border:none; color:var(--mut); text-decoration:underline; cursor:pointer; margin-left:auto; }
+
+.overlay { position:fixed; inset:0; background:rgba(0,0,0,.45); display:flex; align-items:center; justify-content:center; z-index:100; }
+.overlay .card { background:#fff; color:#222; width:min(640px,92vw); max-height:84vh; overflow:auto; padding:22px 24px; border-radius:10px; box-shadow:0 8px 32px rgba(0,0,0,.3); }
+.overlay h2 { margin:0 0 8px; font-size:18px; }
+.overlay .row { display:flex; gap:8px; margin:12px 0 0; justify-content:flex-end; }
+.overlay small { color:#666; }
+.overlay .err { color:#d12; }
+.un-list { list-style:none; padding:0; margin:10px 0; }
+.un-list li { padding:6px 0; border-bottom:1px solid #8883; word-break:break-all; }
+.un-list label { display:flex; gap:10px; align-items:center; cursor:pointer; }
+.un-list .un-main { flex:1; }
+.un-list.apps li { display:flex; gap:10px; align-items:center; }
+.un-list .sz { white-space:nowrap; }
+#un-total { font-weight:600; margin-top:6px; }
+button.danger-solid { background:#d12; border-color:#d12; }
+@media (prefers-color-scheme: dark) { .overlay .card { background:#2a2a2e; color:#eee; } .overlay small { color:#aaa; } }
