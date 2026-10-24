@@ -11,6 +11,14 @@ pub enum Target {
     Service { name: String },
     /// The active power plan (value is the plan's GUID).
     Power,
+    /// A whole registry key. Absent = missing, Str("") = present with an empty default value.
+    RegKey { hive: String, path: String },
+    /// A boot configuration value (bcdedit). Value is "Yes" / "No" or Absent.
+    Bcd { name: String },
+    /// Hibernation: Str("on") or Str("off").
+    Hibernate,
+    /// DNS servers of one network adapter: Str("dhcp") or Str("1.1.1.1,1.0.0.1").
+    Dns { adapter: String },
 }
 
 /// A value as we saw it. `Other` is a value of a type we do not handle; we never overwrite it.
@@ -19,6 +27,8 @@ pub enum Val {
     Absent,
     Dword(u32),
     Str(String),
+    /// A binary registry value.
+    Bin(Vec<u8>),
     Other,
 }
 
@@ -141,6 +151,26 @@ mod tests {
         assert!(j.has("a") && j.has("b"));
         j.remove(1);
         assert!(!j.has("a"));
+    }
+
+    #[test]
+    fn new_targets_round_trip() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("j.json");
+        let mut j = Journal::default();
+        j.push(
+            "x",
+            1,
+            vec![
+                Change { target: Target::RegKey { hive: "HKCU".into(), path: "a".into() }, old: Val::Absent },
+                Change { target: Target::Bcd { name: "useplatformclock".into() }, old: Val::Str("Yes".into()) },
+                Change { target: Target::Hibernate, old: Val::Str("on".into()) },
+                Change { target: Target::Dns { adapter: "Wi-Fi".into() }, old: Val::Str("dhcp".into()) },
+                Change { target: Target::Power, old: Val::Bin(vec![3, 0, 0]) },
+            ],
+        );
+        j.save(&p).unwrap();
+        assert_eq!(Journal::load(&p).unwrap(), j);
     }
 
     #[test]

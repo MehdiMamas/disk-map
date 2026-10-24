@@ -15,6 +15,8 @@ pub trait Backend {
     fn read(&self, t: &Target) -> Result<Val, String>;
     fn write(&self, t: &Target, v: &Val) -> Result<(), String>;
     fn is_admin(&self) -> bool;
+    /// Ids of the network interfaces (for the per-interface Nagle setting).
+    fn interfaces(&self) -> Vec<String>;
 }
 
 /// (id, label, GUID) of the power plans we offer.
@@ -24,6 +26,7 @@ pub const PLANS: &[(&str, &str, &str)] = &[
     ("ultimate", "Ultimate Performance", "e9a42b02-d5df-448d-aa00-03f14749eb61"),
 ];
 
+#[derive(Clone)]
 pub struct Item {
     pub target: Target,
     /// Value when our optimization is applied.
@@ -35,6 +38,8 @@ pub struct Item {
 pub enum Kind {
     Toggle(Vec<Item>),
     Plan,
+    /// TcpAckFrequency and TCPNoDelay on every network interface.
+    Nagle,
 }
 
 pub struct Tweak {
@@ -57,7 +62,18 @@ fn reg(hive: &str, path: &str, name: &str, on: Val, off: Val) -> Item {
     Item { target: Target::Reg { hive: hive.into(), path: path.into(), name: name.into() }, on, off }
 }
 fn svc(name: &str, off: &str) -> Item {
-    Item { target: Target::Service { name: name.into() }, on: st("disabled"), off: st(off) }
+    svc_to(name, "disabled", off)
+}
+fn svc_to(name: &str, on: &str, off: &str) -> Item {
+    Item { target: Target::Service { name: name.into() }, on: st(on), off: st(off) }
+}
+fn regkey(hive: &str, path: &str, on: Val, off: Val) -> Item {
+    Item { target: Target::RegKey { hive: hive.into(), path: path.into() }, on, off }
+}
+fn bin(n: u8) -> Val {
+    let mut v = vec![0u8; 12];
+    v[0] = n;
+    Val::Bin(v)
 }
 
 const CDM: &str = r"Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager";
