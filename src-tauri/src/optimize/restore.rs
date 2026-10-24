@@ -77,7 +77,7 @@ fn run_script() -> Result<String, String> {
     let script = "$ErrorActionPreference='Stop'; \
 function Newest { try { $r = Get-ComputerRestorePoint | Sort-Object SequenceNumber -Descending | Select-Object -First 1; if ($r) { [int64]([DateTimeOffset][Management.ManagementDateTimeConverter]::ToDateTime($r.CreationTime)).ToUnixTimeSeconds() } else { 'none' } } catch { 'none' } }; \
 Write-Output ('BEFORE:' + (Newest)); \
-try { Checkpoint-Computer -Description 'Before Disk Map changes' -RestorePointType MODIFY_SETTINGS -WarningAction SilentlyContinue } catch { Write-Output ('ERR:' + ($_.Exception.Message -replace '\s+',' ')) }; \
+try { Checkpoint-Computer -Description 'Before Disk Map changes' -RestorePointType MODIFY_SETTINGS -WarningAction SilentlyContinue } catch { Write-Output ('ERR:' + $_.Exception.Message.Replace([string][char]10,' ').Replace([string][char]13,' ')) }; \
 Write-Output ('AFTER:' + (Newest))";
     let out = std::process::Command::new("powershell")
         .args(["-NoProfile", "-NonInteractive", "-Command", script])
