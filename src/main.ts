@@ -290,14 +290,21 @@ function overlay(id: string, html: string): HTMLElement {
   return ov;
 }
 
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "Escape") return;
+  const all = document.querySelectorAll(".overlay");
+  all[all.length - 1]?.remove();
+});
+
 async function openUninstall(appPath: string) {
   const ov = overlay("uninstall", `<h2>Uninstall app</h2><p>Reading the app…</p>`);
   const card = ov.querySelector(".card")!;
+  const q = (id: string) => card.querySelector<HTMLElement>("#" + id)!;
   let plan: UninstallPlan;
   try { plan = await invoke<UninstallPlan>("app_uninstall_plan", { path: appPath }); }
   catch (e) {
     card.innerHTML = `<h2>Can't uninstall</h2><p class="err">${esc(String(e))}</p><div class="row"><button id="un-close">Close</button></div>`;
-    $("un-close").onclick = () => ov.remove();
+    q("un-close").onclick = () => ov.remove();
     return;
   }
   const rows = [{ path: appPath, kind: "The app", size: plan.app_size, default_checked: true, locked: true },
@@ -311,16 +318,16 @@ async function openUninstall(appPath: string) {
   const boxes = () => Array.from(ov.querySelectorAll<HTMLInputElement>("input[type=checkbox]"));
   const total = () => {
     const sel = boxes().filter((b) => b.checked).map((b) => rows[Number(b.dataset.i)]);
-    $("un-total").textContent = `${sel.length} item${sel.length === 1 ? "" : "s"} selected, ${fmt(sel.reduce((a, r) => a + r.size, 0))}`;
+    q("un-total").textContent = `${sel.length} item${sel.length === 1 ? "" : "s"} selected, ${fmt(sel.reduce((a, r) => a + r.size, 0))}`;
     return sel;
   };
   boxes().forEach((b) => b.addEventListener("change", total));
   total();
-  $("un-cancel").onclick = () => ov.remove();
-  $("un-go").onclick = async () => {
+  q("un-cancel").onclick = () => ov.remove();
+  q("un-go").onclick = async () => {
     const items = total().map((r) => r.path);
-    $("un-go").setAttribute("disabled", "");
-    $("un-total").textContent = "Moving to the Trash…";
+    q("un-go").setAttribute("disabled", "");
+    q("un-total").textContent = "Moving to the Trash…";
     let res: ItemResult[] = [];
     let fatal = "";
     try { res = await invoke<ItemResult[]>("uninstall_app", { path: appPath, items }); } catch (e) { fatal = String(e); }
@@ -330,29 +337,43 @@ async function openUninstall(appPath: string) {
       ${okN.length ? `<ul class="un-list">${okN.map((r) => `<li>✓ ${esc(r.path)}</li>`).join("")}</ul>` : ""}
       ${bad.length ? `<p class="err">Failed:</p><ul class="un-list">${bad.map((r) => `<li>✗ ${esc(r.path)}<br><small class="err">${esc(r.error ?? "")}</small></li>`).join("")}</ul>` : ""}
       <div class="row"><button id="un-close" class="primary">Done</button></div>`;
-    $("un-close").onclick = () => ov.remove();
-    if (okN.length) {
-      void refreshStack();
-      if (document.getElementById("appsPanel")) void openApps();
-    }
+    if (okN.length) { void refreshStack(); if (okN.some((r) => r.path === appPath)) forgetApp(appPath); }
+    q("un-close").onclick = () => ov.remove();
   };
 }
 
-async function openApps() {
-  const ov = overlay("appsPanel", `<h2>Installed apps</h2><p>Measuring apps and their data… this can take a few seconds.</p>`);
+// Measuring every app is slow, so the list is kept and reused until the user asks for a fresh one.
+let appsCache: AppEntry[] | null = null;
+
+function renderApps(ov: HTMLElement) {
   const card = ov.querySelector(".card")!;
-  const close = () => { $("un-close").onclick = () => ov.remove(); };
+  const apps = appsCache ?? [];
+  card.innerHTML = `<h2>Installed apps</h2><small>Sorted by app size plus its leftover data.</small>
+    <ul class="un-list apps">${apps.map((a, i) => `<li><span class="un-main"><b>${esc(a.name)}</b><br><small>App ${fmt(a.app_size)} · data ${fmt(a.data_size)}</small></span>
+      <span class="sz">${fmt(a.app_size + a.data_size)}</span><button data-i="${i}" class="danger">Uninstall…</button></li>`).join("")}</ul>
+    <div class="row"><button id="apps-refresh">Refresh</button><button id="un-close">Close</button></div>`;
+  card.querySelector<HTMLElement>("#un-close")!.onclick = () => ov.remove();
+  card.querySelector<HTMLElement>("#apps-refresh")!.onclick = () => { appsCache = null; void openApps(); };
+  card.querySelectorAll<HTMLElement>("button[data-i]").forEach((b) => b.onclick = () => openUninstall(apps[Number(b.dataset.i)].path));
+}
+
+// After an uninstall: drop the app from the kept list and redraw it in place, without measuring again.
+function forgetApp(path: string) {
+  if (appsCache) appsCache = appsCache.filter((a) => a.path !== path);
+  const ov = document.getElementById("appsPanel");
+  if (ov) renderApps(ov);
+}
+
+async function openApps() {
+  if (appsCache) { renderApps(overlay("appsPanel", "")); return; }
+  const ov = overlay("appsPanel", `<h2>Installed apps</h2><p>Measuring apps and their data… this can take a few seconds.</p>`);
   try {
-    const apps = await invoke<AppEntry[]>("list_apps");
-    card.innerHTML = `<h2>Installed apps</h2><small>Sorted by app size plus its leftover data.</small>
-      <ul class="un-list apps">${apps.map((a, i) => `<li><span class="un-main"><b>${esc(a.name)}</b><br><small>App ${fmt(a.app_size)} · data ${fmt(a.data_size)}</small></span>
-        <span class="sz">${fmt(a.app_size + a.data_size)}</span><button data-i="${i}" class="danger">Uninstall…</button></li>`).join("")}</ul>
-      <div class="row"><button id="un-close">Close</button></div>`;
-    close();
-    ov.querySelectorAll<HTMLElement>("button[data-i]").forEach((b) => b.onclick = () => openUninstall(apps[Number(b.dataset.i)].path));
+    appsCache = await invoke<AppEntry[]>("list_apps");
+    if (ov.isConnected) renderApps(ov);
   } catch (e) {
+    const card = ov.querySelector(".card")!;
     card.innerHTML = `<h2>Installed apps</h2><p class="err">${esc(String(e))}</p><div class="row"><button id="un-close">Close</button></div>`;
-    close();
+    card.querySelector<HTMLElement>("#un-close")!.onclick = () => ov.remove();
   }
 }
 if (isMac) { $("apps").hidden = false; $("apps").addEventListener("click", openApps); }
