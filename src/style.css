@@ -112,3 +112,6 @@ button.danger-solid { background:#d12; border-color:#d12; }
 .opt-plan li { padding:4px 0; border-bottom:1px solid var(--line); }
 .opt-plan li.skip { color:var(--mut); }
 .err { color:#d93025; }
+.opt-list select { max-width: 200px; }
+.opt-raw { white-space: pre-wrap; margin: 4px 0; }
+#opt-host { flex: 1; min-width: 0; }

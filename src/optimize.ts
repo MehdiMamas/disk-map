@@ -24,7 +24,7 @@ export interface OptimizeHooks {
 const ADMIN_TIP = "Restart Disk Map as administrator to change this";
 const SECTIONS: [string, string][] = [
   ["overview", "Overview"], ["profiles", "Profiles"], ["performance", "Performance"], ["privacy", "Privacy"], ["windows", "Windows"],
-  ["startup", "Startup"], ["apps", "Apps"], ["processes", "Processes"],
+  ["startup", "Startup"], ["apps", "Apps"], ["processes", "Processes"], ["network", "Network"], ["hardware", "Hardware"],
 ];
 
 const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]!));
@@ -41,6 +41,29 @@ let loaded = false;
 let loading = false;
 let filter = "";
 let msg = "";
+
+interface NetAdapter { name: string; dhcp: boolean; servers: string[]; changed: boolean }
+interface NetReport { windows: boolean; admin: boolean; adapters: NetAdapter[] }
+interface PingResult { sent: number | null; received: number | null; loss_pct: number | null; min_ms: number | null; max_ms: number | null; avg_ms: number | null; raw: string }
+interface Hardware {
+  windows: boolean; cpu: string; physical_cores: number | null; logical_cores: number; base_mhz: number | null;
+  ram_total: number; ram_speed_mhz: number | null; gpus: { name: string; driver: string }[];
+  disks: { name: string; kind: string; size: number }[]; volumes: { mount: string; total: number; free: number }[];
+  os: string; uptime_secs: number;
+}
+const PROVIDERS: [string, string, string][] = [
+  ["cloudflare", "Cloudflare", "1.1.1.1,1.0.0.1"], ["google", "Google", "8.8.8.8,8.8.4.4"],
+  ["quad9", "Quad9", "9.9.9.9,149.112.112.112"], ["auto", "Automatic (DHCP)", ""],
+];
+let net: NetReport | null = null;
+let netBusy = false;
+let host = "";
+let pinging = false;
+let pingRes: PingResult | null = null;
+let pingErr = "";
+let hw: Hardware | null = null;
+let hwBusy = false;
+let flushNote = "";
 
 export function initOptimize(el: HTMLElement, h: OptimizeHooks) {
   root = el;
@@ -74,7 +97,7 @@ async function loadAll() {
 }
 
 function refreshing() {
-  overview = null; installed = null; procs = null; tw = null; loaded = false;
+  overview = null; installed = null; procs = null; tw = null; loaded = false; net = null; hw = null;
   void loadAll();
 }
 
@@ -158,6 +181,105 @@ function processesHtml(): string {
     <button data-k="task_manager" data-a="">${hooks.isMac ? "Open Activity Monitor" : "Open Task Manager"}</button>`;
 }
 
+function currentProvider(a: NetAdapter): string {
+  if (a.dhcp) return "auto";
+  const list = a.servers.join(",");
+  return PROVIDERS.find((p) => p[2] === list)?.[0] ?? "";
+}
+
+function networkHtml(): string {
+  if (hooks.isMac) return winOnly();
+  if (!net) {
+    if (!netBusy) void loadNet();
+    return `<p class="opt-load">Reading network adapters...</p>`;
+  }
+  if (!net.windows) return winOnly();
+  const tip = net.admin ? "" : ADMIN_TIP;
+  const dis = tip ? ` disabled title="${esc(tip)}"` : "";
+  const rows = net.adapters.map((a, i) => {
+    const cur = currentProvider(a);
+    const opts = (cur ? "" : `<option value="" selected>Custom</option>`) + PROVIDERS.map((p) => `<option value="${p[0]}"${p[0] === cur ? " selected" : ""}>${p[1]}</option>`).join("");
+    return `<li><span class="opt-main"><b>${esc(a.name)}</b><br><small>${a.dhcp ? "Automatic (DHCP)" : "Set by hand"}: ${a.servers.length ? esc(a.servers.join(", ")) : "none"}</small></span>
+      <select data-dns="${i}"${dis}>${opts}</select>
+      ${a.changed ? `<button data-dnsundo="${i}"${dis}>Undo</button>` : ""}</li>`;
+  }).join("") || `<li class="opt-none">No connected network adapters found.</li>`;
+  let pr = "";
+  if (pingErr) pr = `<p class="err">${esc(pingErr)}</p>`;
+  else if (pingRes) {
+    const r = pingRes;
+    pr = r.avg_ms !== null || r.loss_pct !== null
+      ? `<p>Average ${r.avg_ms ?? "?"} ms (min ${r.min_ms ?? "?"}, max ${r.max_ms ?? "?"}), ${r.loss_pct ?? "?"}% lost${r.sent !== null ? ` (${r.received ?? 0} of ${r.sent} replies)` : ""}</p>`
+      : `<pre class="opt-raw">${esc(r.raw)}</pre>`;
+  }
+  return `<ul class="opt-list">${rows}</ul>
+    <p class="opt-none">Switching DNS changes where this PC looks up website names. Every change can be undone.</p>
+    <div class="opt-bar"><button id="opt-flush">Flush DNS cache</button>${flushNote ? `<span class="tag">${esc(flushNote)}</span>` : ""}</div>
+    <div class="opt-bar"><input id="opt-host" placeholder="Host to ping, e.g. 1.1.1.1" value="${esc(host)}" spellcheck="false"><button id="opt-ping"${pinging ? " disabled" : ""}>${pinging ? "Pinging..." : "Ping"}</button></div>${pr}`;
+}
+
+async function loadNet() {
+  netBusy = true;
+  try { net = await invoke<NetReport>("optimize_net"); } catch (e) { msg = String(e); net = { windows: false, admin: false, adapters: [] }; }
+  netBusy = false;
+  render();
+}
+
+async function setDns(i: number, provider: string) {
+  const a = net?.adapters[i];
+  if (!a || !provider) return;
+  try { net = await invoke<NetReport>("optimize_set_dns", { adapter: a.name, provider }); msg = ""; } catch (e) { msg = String(e); }
+  render();
+}
+
+async function undoDns(i: number) {
+  const a = net?.adapters[i];
+  if (!a) return;
+  try { net = await invoke<NetReport>("optimize_undo_dns", { adapter: a.name }); msg = ""; } catch (e) { msg = String(e); }
+  render();
+}
+
+async function flushDns() {
+  flushNote = "";
+  try { await invoke("optimize_flush_dns"); flushNote = "DNS cache flushed."; msg = ""; } catch (e) { msg = String(e); }
+  render();
+}
+
+async function doPing() {
+  pinging = true; pingRes = null; pingErr = "";
+  render();
+  try { pingRes = await invoke<PingResult>("optimize_ping", { host: host.trim() }); } catch (e) { pingErr = String(e); }
+  pinging = false;
+  render();
+}
+
+function span(s: number): string {
+  const d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600), m = Math.floor((s % 3600) / 60);
+  return d ? `${d}d ${h}h ${m}m` : h ? `${h}h ${m}m` : `${m}m`;
+}
+
+function hardwareHtml(): string {
+  if (!hw) {
+    if (!hwBusy) void loadHw();
+    return `<p class="opt-load">Reading hardware details...</p>`;
+  }
+  const h = hw;
+  const row = (k: string, v: string) => `<li><span class="opt-main"><b>${k}</b></span><span>${esc(v)}</span></li>`;
+  const cores = `${h.physical_cores ?? "?"} physical, ${h.logical_cores} logical`;
+  const clock = h.base_mhz ? `, ${(h.base_mhz / 1000).toFixed(2)} GHz` : "";
+  const ram = hooks.fmt(h.ram_total) + (h.ram_speed_mhz ? `, ${h.ram_speed_mhz} MHz` : "");
+  const gpus = h.gpus.length ? h.gpus.map((g) => row("Graphics", g.name + (g.driver ? ` (driver ${g.driver})` : ""))).join("") : (h.windows ? row("Graphics", "Not found") : "");
+  const disks = h.disks.map((d) => row("Drive", `${d.name}, ${d.kind}, ${hooks.fmt(d.size)}`)).join("");
+  const vols = h.volumes.map((v) => row("Volume " + v.mount, `${hooks.fmt(v.free)} free of ${hooks.fmt(v.total)}`)).join("");
+  return `<ul class="opt-list">${row("Processor", h.cpu || "Unknown")}${row("Cores", cores + clock)}${row("Memory", ram)}${gpus}${disks}${vols}${row("System", h.os)}${row("Uptime", span(h.uptime_secs))}</ul>`;
+}
+
+async function loadHw() {
+  hwBusy = true;
+  try { hw = await invoke<Hardware>("optimize_hardware"); } catch (e) { msg = String(e); }
+  hwBusy = false;
+  render();
+}
+
 function render() {
   if (loading && !overview) { root.innerHTML = `<p class="opt-load">Checking your computer…</p>`; return; }
   const nav = SECTIONS.map(([id, label]) => `<button data-sec="${id}"${id === section ? ' class="on"' : ""}>${label}</button>`).join("");
@@ -170,6 +292,8 @@ function render() {
   else if (section === "windows") body = tweaksHtml("windows");
   else if (section === "startup") body = startupHtml();
   else if (section === "apps") body = appsHtml();
+  else if (section === "network") body = networkHtml();
+  else if (section === "hardware") body = hardwareHtml();
   else body = processesHtml();
   const title = SECTIONS.find((x) => x[0] === section)![1];
   root.innerHTML = `<div class="opt-wrap"><nav class="opt-nav">${nav}</nav><div class="opt-body">
@@ -262,6 +386,15 @@ function wire() {
     const it = overview?.startup[Number(b.dataset.su)];
     if (it) void toggle(it);
   }));
+  root.querySelectorAll<HTMLSelectElement>("select[data-dns]").forEach((i) => i.addEventListener("change", () => void setDns(Number(i.dataset.dns), i.value)));
+  root.querySelectorAll<HTMLElement>("button[data-dnsundo]").forEach((b) => b.addEventListener("click", () => void undoDns(Number(b.dataset.dnsundo))));
+  root.querySelector<HTMLElement>("#opt-flush")?.addEventListener("click", () => void flushDns());
+  root.querySelector<HTMLElement>("#opt-ping")?.addEventListener("click", () => void doPing());
+  const hi = root.querySelector<HTMLInputElement>("#opt-host");
+  if (hi) {
+    hi.addEventListener("input", () => { host = hi.value; });
+    hi.addEventListener("keydown", (e) => { if (e.key === "Enter" && !pinging) void doPing(); });
+  }
   root.querySelector<HTMLElement>("button[data-mac]")?.addEventListener("click", () => hooks.openMacApps());
   root.querySelectorAll<HTMLElement>("button[data-un]").forEach((b) => b.addEventListener("click", async () => {
     const a = installed?.find((x) => x.id === b.dataset.un);
