@@ -449,7 +449,7 @@ pub async fn optimize_hardware() -> Result<hw::Hardware, String> {
 /// Login Items (macOS, read-only). Err carries a note to show instead of the list.
 #[tauri::command]
 pub async fn optimize_login_items() -> Result<Vec<String>, String> {
-    blocking(startup::login_items).await
+    blocking(startup::login_items).await?
 }
 
 /// Restarts the Dock and Finder so Dock and Finder settings show. Only runs when the user clicks.
@@ -468,7 +468,7 @@ pub async fn optimize_relaunch_shell() -> Result<(), String> {
             Err("Only needed on macOS.".to_string())
         }
     })
-    .await
+    .await?
 }
 
 /// Makes a restore point (Windows) or a Time Machine snapshot (macOS) once per run, before the first change. Slow (10-30 s).

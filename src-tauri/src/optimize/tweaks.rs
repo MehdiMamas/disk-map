@@ -1000,6 +1000,7 @@ mod win {
             }
             Target::Hibernate => hibernate_read(),
             Target::Dns { adapter } => crate::optimize::net::dns_read(adapter),
+            Target::Defaults { .. } => Err("Only on macOS.".into()),
         }
     }
 
@@ -1027,6 +1028,7 @@ mod win {
                 _ => Err("Cannot set hibernation.".into()),
             },
             Target::Dns { adapter } => crate::optimize::net::dns_write(adapter, v),
+            Target::Defaults { .. } => Err("Only on macOS.".into()),
         }
     }
 }
