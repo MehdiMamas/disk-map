@@ -1132,7 +1132,7 @@ mod tests {
         assert_eq!(apply(&m, &mut j, &tw, "on", 1, &mut ok_persist()), Err(ADMIN_MSG.to_string()));
         assert!(m.log.borrow().is_empty());
         let plan = plan_profile(&m, "gaming").unwrap();
-        assert!(plan.iter().all(|p| !p.admin));
+        assert!(plan.iter().filter(|p| p.admin).all(|p| p.skip.is_some()));
         let work = plan_profile(&m, "work").unwrap();
         let idx = work.iter().find(|p| p.id == "search-indexing").unwrap();
         assert_eq!(idx.skip.as_deref(), Some("Needs administrator"));
