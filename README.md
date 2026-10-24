@@ -23,6 +23,7 @@ Get the latest installer from the [Releases page](https://github.com/MehdiMamas/
 - Squarified treemap plus a sorted list with size bars, breadcrumb and back button. Children under 0.5% of their parent are grouped into "(other)".
 - Known hogs (Xcode DerivedData, CoreSimulator, Docker, node_modules, Library/Caches and AppData caches, .gradle, .npm, pnpm store, Cargo `target`) get a tag with a plain note and a "safe to clear?" value. Rules live in `src-tauri/src/hogs.rs`.
 - Reveal in Finder/Explorer. Move to Trash after a confirm dialog (system Trash/Recycle Bin via the `trash` crate; nothing is ever deleted permanently).
+- macOS: uninstall an app completely. "Uninstall app…" on any .app (or the Apps list in the header) shows the bundle plus matching leftovers in ~/Library as a checklist and moves what you check to the Trash; shared-looking home dot-folders like `~/.cursor` start unchecked. Apple apps and running apps are refused.
 - Update notifications: a few seconds after launch (and on "Check for updates") the app asks GitHub for the latest release and offers its download when it is newer.
 - macOS: if folders are blocked, a hint explains how to grant Full Disk Access.
 

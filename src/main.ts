@@ -21,6 +21,7 @@ app.innerHTML = `
   <input id="path" spellcheck="false" />
   <button id="pick">Choose…</button>
   <button id="scan" class="primary">Scan</button>
+  <button id="apps" class="link" hidden>Apps</button>
   <button id="upd" class="link">Check for updates</button>
 </header>
 <div id="status"></div>
@@ -113,7 +114,7 @@ function render() {
   const max = kids[0]?.size || 1;
   $("list").innerHTML = kids.map((k, i) => {
     const tag = k.hog ? `<span class="tag ${k.hog.safe}" title="${esc(k.hog.note)}">${esc(k.hog.label)}: ${safeText(k.hog.safe)}</span><span class="note">${esc(k.hog.note)}</span>` : "";
-    const acts = k.other ? "" : `<button data-act="reveal" data-i="${i}">${isMac ? "Reveal in Finder" : "Show in Explorer"}</button><button data-act="trash" data-i="${i}" class="danger">Move to Trash</button>`;
+    const acts = k.other ? "" : `<button data-act="reveal" data-i="${i}">${isMac ? "Reveal in Finder" : "Show in Explorer"}</button>${isMac && k.name.endsWith(".app") ? `<button data-act="uninstall" data-i="${i}" class="danger">Uninstall app…</button>` : ""}<button data-act="trash" data-i="${i}" class="danger">Move to Trash</button>`;
     return `<li class="${k.is_dir && !k.other ? "dir" : ""}" data-i="${i}">
       <div class="bar" style="width:${(k.size / max) * 100}%"></div>
       <div class="row"><span class="name">${k.is_dir ? "▸ " : ""}${esc(k.name)}</span><span class="sz">${fmt(k.size)}</span></div>
@@ -125,6 +126,7 @@ function render() {
       const k = kids[Number(li.dataset.i)];
       if (t.dataset.act === "reveal") { invoke("reveal", { path: k.path }); return; }
       if (t.dataset.act === "trash") { trash(k); return; }
+      if (t.dataset.act === "uninstall") { openUninstall(k.path); return; }
       drill(k);
     }));
 }
@@ -138,6 +140,15 @@ async function drill(k: VNode) {
     stack.push(await invoke<VNode>("view", { path: k.path }));
     render();
   } catch (e) { $("status").textContent = `Error: ${e}`; }
+}
+
+async function refreshStack() {
+  const paths = stack.map((n) => n.path);
+  const next: VNode[] = [];
+  for (const p of paths) {
+    try { next.push(await invoke<VNode>("view", { path: p })); } catch { break; }
+  }
+  if (next.length) { stack = next; render(); }
 }
 
 async function trash(k: VNode) {
@@ -261,3 +272,87 @@ async function checkForUpdate(manual: boolean) {
 }
 $("upd").onclick = () => checkForUpdate(true);
 setTimeout(() => checkForUpdate(false), 3000);
+
+// ---- Uninstall apps (macOS) ----
+interface Leftover { path: string; size: number; kind: string; default_checked: boolean }
+interface UninstallPlan { name: string; bundle_id: string; app_size: number; leftovers: Leftover[] }
+interface AppEntry { path: string; name: string; app_size: number; data_size: number }
+interface ItemResult { path: string; ok: boolean; error: string | null }
+
+function overlay(id: string, html: string): HTMLElement {
+  document.getElementById(id)?.remove();
+  const ov = document.createElement("div");
+  ov.id = id;
+  ov.className = "overlay";
+  ov.innerHTML = `<div class="card">${html}</div>`;
+  ov.addEventListener("click", (e) => { if (e.target === ov) ov.remove(); });
+  document.body.appendChild(ov);
+  return ov;
+}
+
+async function openUninstall(appPath: string) {
+  const ov = overlay("uninstall", `<h2>Uninstall app</h2><p>Reading the app…</p>`);
+  const card = ov.querySelector(".card")!;
+  let plan: UninstallPlan;
+  try { plan = await invoke<UninstallPlan>("app_uninstall_plan", { path: appPath }); }
+  catch (e) {
+    card.innerHTML = `<h2>Can't uninstall</h2><p class="err">${esc(String(e))}</p><div class="row"><button id="un-close">Close</button></div>`;
+    $("un-close").onclick = () => ov.remove();
+    return;
+  }
+  const rows = [{ path: appPath, kind: "The app", size: plan.app_size, default_checked: true, locked: true },
+    ...plan.leftovers.map((l) => ({ ...l, locked: false }))];
+  card.innerHTML = `<h2>Uninstall ${esc(plan.name)}</h2>
+    <small>${esc(plan.bundle_id)}. Everything checked goes to the Trash, so you can still put it back.</small>
+    <ul class="un-list">${rows.map((r, i) => `<li><label><input type="checkbox" data-i="${i}" ${r.default_checked ? "checked" : ""} ${r.locked ? "disabled" : ""}>
+      <span class="un-main"><b>${esc(r.path)}</b><br><small>${esc(r.kind)}</small></span><span class="sz">${fmt(r.size)}</span></label></li>`).join("")}</ul>
+    <div id="un-total"></div>
+    <div class="row"><button id="un-cancel">Cancel</button><button id="un-go" class="primary danger-solid">Move to Trash</button></div>`;
+  const boxes = () => Array.from(ov.querySelectorAll<HTMLInputElement>("input[type=checkbox]"));
+  const total = () => {
+    const sel = boxes().filter((b) => b.checked).map((b) => rows[Number(b.dataset.i)]);
+    $("un-total").textContent = `${sel.length} item${sel.length === 1 ? "" : "s"} selected, ${fmt(sel.reduce((a, r) => a + r.size, 0))}`;
+    return sel;
+  };
+  boxes().forEach((b) => b.addEventListener("change", total));
+  total();
+  $("un-cancel").onclick = () => ov.remove();
+  $("un-go").onclick = async () => {
+    const items = total().map((r) => r.path);
+    $("un-go").setAttribute("disabled", "");
+    $("un-total").textContent = "Moving to the Trash…";
+    let res: ItemResult[] = [];
+    let fatal = "";
+    try { res = await invoke<ItemResult[]>("uninstall_app", { path: appPath, items }); } catch (e) { fatal = String(e); }
+    const okN = res.filter((r) => r.ok), bad = res.filter((r) => !r.ok);
+    card.innerHTML = `<h2>${fatal ? "Couldn't uninstall" : `Moved ${okN.length} item${okN.length === 1 ? "" : "s"} to the Trash`}</h2>
+      ${fatal ? `<p class="err">${esc(fatal)}</p>` : ""}
+      ${okN.length ? `<ul class="un-list">${okN.map((r) => `<li>✓ ${esc(r.path)}</li>`).join("")}</ul>` : ""}
+      ${bad.length ? `<p class="err">Failed:</p><ul class="un-list">${bad.map((r) => `<li>✗ ${esc(r.path)}<br><small class="err">${esc(r.error ?? "")}</small></li>`).join("")}</ul>` : ""}
+      <div class="row"><button id="un-close" class="primary">Done</button></div>`;
+    $("un-close").onclick = () => ov.remove();
+    if (okN.length) {
+      void refreshStack();
+      if (document.getElementById("appsPanel")) void openApps();
+    }
+  };
+}
+
+async function openApps() {
+  const ov = overlay("appsPanel", `<h2>Installed apps</h2><p>Measuring apps and their data… this can take a few seconds.</p>`);
+  const card = ov.querySelector(".card")!;
+  const close = () => { $("un-close").onclick = () => ov.remove(); };
+  try {
+    const apps = await invoke<AppEntry[]>("list_apps");
+    card.innerHTML = `<h2>Installed apps</h2><small>Sorted by app size plus its leftover data.</small>
+      <ul class="un-list apps">${apps.map((a, i) => `<li><span class="un-main"><b>${esc(a.name)}</b><br><small>App ${fmt(a.app_size)} · data ${fmt(a.data_size)}</small></span>
+        <span class="sz">${fmt(a.app_size + a.data_size)}</span><button data-i="${i}" class="danger">Uninstall…</button></li>`).join("")}</ul>
+      <div class="row"><button id="un-close">Close</button></div>`;
+    close();
+    ov.querySelectorAll<HTMLElement>("button[data-i]").forEach((b) => b.onclick = () => openUninstall(apps[Number(b.dataset.i)].path));
+  } catch (e) {
+    card.innerHTML = `<h2>Installed apps</h2><p class="err">${esc(String(e))}</p><div class="row"><button id="un-close">Close</button></div>`;
+    close();
+  }
+}
+if (isMac) { $("apps").hidden = false; $("apps").addEventListener("click", openApps); }
