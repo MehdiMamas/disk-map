@@ -196,7 +196,7 @@ pub fn path_size(p: &Path) -> u64 {
     }
 }
 
-pub fn find_leftovers(info: &AppInfo, home: &Path) -> Vec<Leftover> {
+pub fn find_leftovers(info: &AppInfo, home: &Path, size: &(dyn Fn(&Path) -> u64 + Sync)) -> Vec<Leftover> {
     let mut out = Vec::new();
     let lib = home.join("Library");
     for (dir, kind) in LIB_DIRS {
@@ -205,13 +205,13 @@ pub fn find_leftovers(info: &AppInfo, home: &Path) -> Vec<Leftover> {
         let entries: Vec<String> = rd.flatten().filter_map(|e| e.file_name().into_string().ok()).collect();
         for i in match_names(&entries, info, *dir == "Group Containers") {
             let p = base.join(&entries[i]);
-            out.push(Leftover { size: path_size(&p), path: p.to_string_lossy().into(), kind: (*kind).into(), default_checked: true });
+            out.push(Leftover { size: size(&p), path: p.to_string_lossy().into(), kind: (*kind).into(), default_checked: true });
         }
     }
     for d in dot_folder_names(info) {
         let p = home.join(&d);
         if p.is_dir() {
-            out.push(Leftover { size: path_size(&p), path: p.to_string_lossy().into(), kind: DOT_FOLDER_KIND.into(), default_checked: false });
+            out.push(Leftover { size: size(&p), path: p.to_string_lossy().into(), kind: DOT_FOLDER_KIND.into(), default_checked: false });
         }
     }
     out
@@ -222,7 +222,7 @@ pub fn plan(app_path: &Path, home: &Path) -> Result<(AppInfo, UninstallPlan), St
     let info = app_info(app_path)?;
     check_safe(&info)?;
     check_not_running(&info)?;
-    let leftovers = find_leftovers(&info, home);
+    let leftovers = find_leftovers(&info, home, &path_size);
     let p = UninstallPlan { name: info.name.clone(), bundle_id: info.bundle_id.clone(), app_size: path_size(app_path), leftovers };
     Ok((info, p))
 }
@@ -266,7 +266,8 @@ pub fn uninstall(
         .collect())
 }
 
-pub fn list_apps(home: &Path) -> Vec<AppEntry> {
+/// `size` measures one path; the caller may answer from a stored scan instead of the disk.
+pub fn list_apps(home: &Path, size: &(dyn Fn(&Path) -> u64 + Sync)) -> Vec<AppEntry> {
     let is_app = |p: &Path| p.extension().and_then(|x| x.to_str()) == Some("app");
     let mut apps: Vec<PathBuf> = Vec::new();
     for root in [PathBuf::from("/Applications"), home.join("Applications")] {
@@ -291,8 +292,8 @@ pub fn list_apps(home: &Path) -> Vec<AppEntry> {
                     s.spawn(move || {
                         let info = app_info(p).ok()?;
                         check_safe(&info).ok()?;
-                        let data_size = find_leftovers(&info, home).iter().filter(|l| l.default_checked).map(|l| l.size).sum();
-                        Some(AppEntry { path: p.to_string_lossy().into(), name: info.name, app_size: path_size(p), data_size })
+                        let data_size = find_leftovers(&info, home, size).iter().filter(|l| l.default_checked).map(|l| l.size).sum();
+                        Some(AppEntry { path: p.to_string_lossy().into(), name: info.name, app_size: size(p), data_size })
                     })
                 })
                 .collect();
