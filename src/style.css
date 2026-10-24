@@ -115,3 +115,7 @@ button.danger-solid { background:#d12; border-color:#d12; }
 .opt-list select { max-width: 200px; }
 .opt-raw { white-space: pre-wrap; margin: 4px 0; }
 #opt-host { flex: 1; min-width: 0; }
+.opt-restoring { color:#666; font-size:13px; }
+.opt-restorenote { margin:0 0 8px; font-size:13px; color:#2a7a3b; }
+.overlay .rp-reason { margin:0 0 8px; }
+@media (prefers-color-scheme: dark) { .opt-restoring { color:#aaa; } .opt-restorenote { color:#6fcf84; } }

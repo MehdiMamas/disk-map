@@ -64,6 +64,48 @@ let pingErr = "";
 let hw: Hardware | null = null;
 let hwBusy = false;
 let flushNote = "";
+interface RestoreResult { status: string; time: number | null; reason: string | null }
+let restoreOk = false; // a restore point exists or the user chose to go on without one (this run)
+let restoring = false;
+let restoreNote = "";
+
+/** Makes a Windows restore point before the first change of this run. Returns false if the user cancelled. */
+async function beforeChange(): Promise<boolean> {
+  if (restoreOk || hooks.isMac) return true;
+  restoring = true;
+  render();
+  let r: RestoreResult;
+  try { r = await invoke<RestoreResult>("ensure_restore_point"); }
+  catch (e) { r = { status: "failed", time: null, reason: String(e) }; }
+  restoring = false;
+  if (r.status === "created" || r.status === "already_recent") {
+    restoreOk = true;
+    const t = r.time ? when(r.time) : "";
+    restoreNote = r.status === "created" ? `Restore point created ${t}` : `Using restore point from ${t}`;
+    render();
+    return true;
+  }
+  if (r.status === "unsupported") { restoreOk = true; render(); return true; }
+  const go = await askNoRestore(r.reason ?? "Windows did not create a restore point.");
+  if (go) restoreOk = true;
+  render();
+  return go;
+}
+
+function askNoRestore(reason: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    const ov = document.createElement("div");
+    ov.className = "overlay";
+    ov.innerHTML = `<div class="card"><h2>No restore point</h2><p class="rp-reason"></p>
+      <small>A restore point lets Windows roll the whole computer back. Disk Map also keeps its own Undo for every change.</small>
+      <div class="row"><button class="rp-cancel">Cancel</button><button class="primary rp-go">Continue without restore point</button></div></div>`;
+    ov.querySelector<HTMLElement>(".rp-reason")!.textContent = reason;
+    document.body.appendChild(ov);
+    const done = (v: boolean) => { ov.remove(); resolve(v); };
+    ov.querySelector<HTMLElement>(".rp-cancel")!.addEventListener("click", () => done(false));
+    ov.querySelector<HTMLElement>(".rp-go")!.addEventListener("click", () => done(true));
+  });
+}
 
 export function initOptimize(el: HTMLElement, h: OptimizeHooks) {
   root = el;
@@ -227,6 +269,7 @@ async function loadNet() {
 async function setDns(i: number, provider: string) {
   const a = net?.adapters[i];
   if (!a || !provider) return;
+  if (!(await beforeChange())) { render(); return; }
   try { net = await invoke<NetReport>("optimize_set_dns", { adapter: a.name, provider }); msg = ""; } catch (e) { msg = String(e); }
   render();
 }
@@ -234,6 +277,7 @@ async function setDns(i: number, provider: string) {
 async function undoDns(i: number) {
   const a = net?.adapters[i];
   if (!a) return;
+  if (!(await beforeChange())) { render(); return; }
   try { net = await invoke<NetReport>("optimize_undo_dns", { adapter: a.name }); msg = ""; } catch (e) { msg = String(e); }
   render();
 }
@@ -297,11 +341,12 @@ function render() {
   else body = processesHtml();
   const title = SECTIONS.find((x) => x[0] === section)![1];
   root.innerHTML = `<div class="opt-wrap"><nav class="opt-nav">${nav}</nav><div class="opt-body">
-    <div class="opt-bar"><h3>${title}</h3><button id="opt-refresh"${loading ? " disabled" : ""}>${loading ? "Refreshing…" : "Refresh"}</button>${msg ? `<span class="err">${esc(msg)}</span>` : ""}</div>${notes}${body}</div></div>`;
+    <div class="opt-bar"><h3>${title}</h3><button id="opt-refresh"${loading ? " disabled" : ""}>${loading ? "Refreshing…" : "Refresh"}</button>${restoring ? `<span class="opt-restoring">Creating a restore point…</span>` : ""}${msg ? `<span class="err">${esc(msg)}</span>` : ""}</div>${restoreNote ? `<p class="opt-restorenote">${esc(restoreNote)}</p>` : ""}${notes}${body}</div></div>`;
   wire();
 }
 
 async function setTweak(id: string, target: string) {
+  if (!(await beforeChange())) { render(); return; }
   try { tw = await invoke<TweaksReport>("optimize_set_tweak", { id, target }); msg = ""; }
   catch (e) {
     msg = String(e);
@@ -339,6 +384,7 @@ async function openProfile(id: string) {
   ov.addEventListener("click", (e) => { if (e.target === ov) close(); });
   ov.querySelector<HTMLElement>(".pf-ok")!.addEventListener("click", async () => {
     close();
+    if (!(await beforeChange())) return;
     try { tw = await invoke<TweaksReport>("optimize_apply_profile", { profile: id }); msg = ""; } catch (e) { msg = String(e); }
     render();
   });
@@ -357,6 +403,7 @@ async function run(kind: string, arg: string) {
 }
 
 async function toggle(it: StartupItem) {
+  if (!(await beforeChange())) { render(); return; }
   const want = !it.enabled;
   try {
     await invoke("optimize_set_startup", { id: it.id, enabled: want });

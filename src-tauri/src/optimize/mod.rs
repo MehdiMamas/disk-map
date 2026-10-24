@@ -15,6 +15,7 @@ pub mod installed;
 pub mod journal;
 pub mod net;
 pub mod procs;
+pub mod restore;
 pub mod rules;
 pub mod startup;
 pub mod tweaks;
@@ -439,4 +440,10 @@ pub async fn optimize_ping(host: String) -> Result<net::PingResult, String> {
 #[tauri::command]
 pub async fn optimize_hardware() -> Result<hw::Hardware, String> {
     blocking(hw::read).await
+}
+
+/// Makes a Windows restore point once per run, before the first change. Slow (10-30 s).
+#[tauri::command]
+pub async fn ensure_restore_point() -> Result<restore::RestoreResult, String> {
+    blocking(restore::ensure).await
 }
