@@ -74,7 +74,7 @@ pub fn fetch_latest() -> Result<Release, String> {
 }
 
 pub fn url_allowed(url: &str) -> bool {
-    url.starts_with(URL_PREFIX) && !url.chars().any(|c| c.is_control() || c == ' ')
+    url.starts_with(URL_PREFIX) && !url.chars().any(|c| c.is_control() || " \"&|^<>%`".contains(c))
 }
 
 pub fn open(url: &str) -> Result<(), String> {
@@ -144,6 +144,7 @@ mod tests {
         assert!(open("https://github.com/other/disk-map/").is_err());
         assert!(open("file:///etc/passwd").is_err());
         assert!(!url_allowed("https://github.com/MehdiMamas/disk-map/x y"));
+        assert!(!url_allowed("https://github.com/MehdiMamas/disk-map/x&calc"));
         assert!(url_allowed("https://github.com/MehdiMamas/disk-map/releases/latest"));
     }
 
