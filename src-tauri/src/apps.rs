@@ -431,6 +431,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(target_os = "macos")]
     fn app_trash_failure_falls_back_to_admin_trash() {
         use std::cell::RefCell;
         let t = tempfile::tempdir().unwrap();
