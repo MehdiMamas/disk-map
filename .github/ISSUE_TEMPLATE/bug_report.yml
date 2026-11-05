@@ -20,6 +20,6 @@ body:
     id: version
     attributes:
       label: Disk Map version
-      description: From the Releases page name of the installer you used, for example 0.1.5.
+      description: The version in the installer file name, for example 0.1.5.
     validations:
       required: true
