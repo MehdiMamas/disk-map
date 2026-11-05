@@ -1,14 +1,25 @@
+Disk usage treemap for macOS and Windows: see where your disk space went.
+
 <p align="center"><img src="src-tauri/icons/128x128@2x.png" width="128" alt="Disk Map icon"></p>
 
 # Disk Map
 
-See where your disk space went: a fast treemap and sorted list of any folder, with known space hogs tagged.
+![Disk Map scanning a home folder and drilling into Library and Projects](docs/images/demo.gif)
+
+A fast treemap and sorted list of any folder, with known space hogs tagged.
 
 macOS lumps caches, Xcode data, Docker and simulators under "System Data". Disk Map scans a folder (default: your home), shows what is big, and lets you reveal or trash it.
 
 ## Download
 
-Get the latest installer from the [Releases page](https://github.com/MehdiMamas/disk-map/releases/latest).
+Get the latest installer from the [Releases page](https://github.com/MehdiMamas/disk-map/releases/latest), or download it from a terminal with the [GitHub CLI](https://cli.github.com):
+
+```
+gh release download -R MehdiMamas/disk-map -p '*.dmg'        # macOS
+gh release download -R MehdiMamas/disk-map -p '*-setup.exe'  # Windows
+```
+
+Then open the downloaded file.
 
 - **macOS** (10.15 or later): download the `.dmg` (universal: Apple silicon and Intel). It is signed and notarized by Apple, so it opens without warnings. Drag Disk Map to Applications.
 - **Windows 10/11**: download the `-setup.exe` (an `.msi` is also available). It installs WebView2 if it is missing. The installer is not code-signed, so SmartScreen may warn: click "More info", then "Run anyway".
