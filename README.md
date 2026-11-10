@@ -1,8 +1,8 @@
+<p align="center">Disk usage treemap for macOS and Windows: see where your disk space went.</p>
+
 <p align="center"><img src="src-tauri/icons/128x128@2x.png" width="128" alt="Disk Map icon"></p>
 
 # Disk Map
-
-Disk usage treemap for macOS and Windows: see where your disk space went.
 
 ![Disk Map treemap and sorted list, drilling into Library and Projects (sample data)](docs/images/demo.gif)
 
