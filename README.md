@@ -1,10 +1,10 @@
-Disk usage treemap for macOS and Windows: see where your disk space went.
-
 <p align="center"><img src="src-tauri/icons/128x128@2x.png" width="128" alt="Disk Map icon"></p>
 
 # Disk Map
 
-![Disk Map scanning a home folder and drilling into Library and Projects](docs/images/demo.gif)
+Disk usage treemap for macOS and Windows: see where your disk space went.
+
+![Disk Map treemap and sorted list, drilling into Library and Projects (sample data)](docs/images/demo.gif)
 
 A fast treemap and sorted list of any folder, with known space hogs tagged.
 
