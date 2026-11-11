@@ -3,6 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open, confirm } from "@tauri-apps/plugin-dialog";
 import { squarify } from "./treemap";
+import { initOptimize, showOptimize } from "./optimize";
 import "./style.css";
 
 interface Hog { id: string; label: string; safe: string; note: string }
@@ -17,6 +18,7 @@ interface ScanResult {
 
 const app = document.getElementById("app")!;
 app.innerHTML = `
+<div id="tabs"><button id="tab-disk" class="on">Disk</button><button id="tab-opt">Optimize</button></div>
 <header>
   <input id="path" spellcheck="false" />
   <button id="pick">Choose…</button>
@@ -28,7 +30,8 @@ app.innerHTML = `
 <div id="hint" hidden></div>
 <div id="update" hidden></div>
 <nav id="crumbs"><button id="back" disabled>← Back</button><span id="trail"></span><button id="rescan-cur" hidden>Scan this folder again</button></nav>
-<main><div id="map"></div><ul id="list"></ul></main>`;
+<main><div id="map"></div><ul id="list"></ul></main>
+<div id="optimize" hidden></div>`;
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 
 const isWin = navigator.userAgent.includes("Windows");
@@ -492,3 +495,18 @@ async function openApps(fresh = false) {
   }
 }
 if (isMac) { $("apps").hidden = false; $("apps").addEventListener("click", () => void openApps()); }
+
+
+// Tabs: the Disk view keeps its state while hidden; Optimize loads once on first open.
+const diskParts = () => [document.querySelector("header"), $("status"), $("hint"), $("crumbs"), document.querySelector("main")] as HTMLElement[];
+function setTab(opt: boolean) {
+  diskParts().forEach((e) => { if (e.id === "hint") e.dataset.tabHidden = opt ? "1" : ""; e.style.display = opt ? "none" : ""; });
+  $("optimize").hidden = !opt;
+  $("tab-disk").classList.toggle("on", !opt);
+  $("tab-opt").classList.toggle("on", opt);
+  if (opt) showOptimize();
+}
+initOptimize($("optimize"), { isMac, fmt, openMacApps: () => void openApps() });
+$("tab-disk").addEventListener("click", () => setTab(false));
+$("tab-opt").addEventListener("click", () => setTab(true));
+
