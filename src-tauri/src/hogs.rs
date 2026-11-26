@@ -87,6 +87,10 @@ static RULES: &[Rule] = &[
             Pat::NameWithin("Code Cache", "/AppData/Local/"),
         ],
     },
+    Rule {
+        hog: hog!("chrome-sign-clone", "Leftover Chrome copies", "yes", "Copies Chrome makes at launch and should delete on quit; left behind when Chrome is killed or run headless. Safe to trash the ones older than the running Chrome, or restart the Mac."),
+        pats: &[Pat::Suffix("/com.google.Chrome.code_sign_clone")],
+    },
 ];
 
 pub fn normalize(path: &str) -> String {
@@ -137,6 +141,7 @@ mod tests {
         assert_eq!(id("/Users/a/.gradle"), Some("gradle"));
         assert_eq!(id("/Users/a/.npm"), Some("npm"));
         assert_eq!(id("/Users/a/Library/pnpm/store"), Some("pnpm-store"));
+        assert_eq!(id("/private/var/folders/vh/x/X/com.google.Chrome.code_sign_clone"), Some("chrome-sign-clone"));
     }
 
     #[test]
